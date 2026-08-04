@@ -1,0 +1,605 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecordStatus {
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  LOCKED
+  DISABLED
+}
+
+enum MfaType {
+  TOTP
+  RECOVERY_CODES
+}
+
+enum GroupType {
+  DEPARTMENT
+  PROJECT
+  CUSTOM
+}
+
+enum PrincipalType {
+  USER
+  GROUP
+  ORGANIZATION
+}
+
+enum ScopeType {
+  PLATFORM
+  ORGANIZATION
+  SPACE
+}
+
+enum NodeType {
+  FOLDER
+  ASSET
+}
+
+enum ResourceStatus {
+  ACTIVE
+  QUARANTINED
+  DELETED
+  PURGING
+}
+
+enum VersionStatus {
+  QUARANTINED
+  PROCESSING
+  AVAILABLE
+  REJECTED
+  FAILED
+}
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  ERROR
+}
+
+enum RenditionStatus {
+  PENDING
+  PROCESSING
+  AVAILABLE
+  FAILED
+}
+
+enum AclEffect {
+  ALLOW
+  DENY
+}
+
+enum UploadStatus {
+  CREATED
+  UPLOADING
+  COMPLETED
+  ABORTED
+  EXPIRED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  DEAD
+}
+
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+model Organization {
+  id        String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  code      String       @unique @db.VarChar(64)
+  name      String       @db.VarChar(200)
+  status    RecordStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  users       User[]
+  groups      Group[]
+  roles       Role[]
+  ownedSpaces Space[] @relation("SpaceOwnerOrganization")
+
+  @@map("organizations")
+}
+
+model User {
+  id             String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String     @map("organization_id") @db.Uuid
+  loginName      String     @unique @map("login_name") @db.VarChar(100)
+  email          String     @unique @db.VarChar(320)
+  displayName    String     @map("display_name") @db.VarChar(160)
+  status         UserStatus @default(INVITED)
+  lastLoginAt    DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  lockVersion    Int        @default(0) @map("lock_version")
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  credential        UserCredential?
+  mfaMethods        MfaMethod[]
+  sessions          AuthSession[]
+  groupMemberships  GroupMember[]
+  createdSpaces     Space[]            @relation("SpaceCreatedBy")
+  createdNodes      ResourceNode[]     @relation("NodeCreatedBy")
+  createdVersions   AssetVersion[]     @relation("VersionCreatedBy")
+  initiatedUploads  UploadSession[]    @relation("UploadInitiatedBy")
+  createdAclEntries ResourceAclEntry[] @relation("AclCreatedBy")
+  auditEvents       AuditEvent[]       @relation("AuditActor")
+  notifications     Notification[]
+
+  @@index([organizationId, status])
+  @@map("users")
+}
+
+model UserCredential {
+  userId            String    @id @map("user_id") @db.Uuid
+  passwordHash      String    @map("password_hash") @db.VarChar(255)
+  passwordChangedAt DateTime  @default(now()) @map("password_changed_at") @db.Timestamptz(3)
+  failedAttempts    Int       @default(0) @map("failed_attempts")
+  lockedUntil       DateTime? @map("locked_until") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_credentials")
+}
+
+model MfaMethod {
+  id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  type             MfaType
+  label            String?   @db.VarChar(100)
+  secretCiphertext String    @map("secret_ciphertext") @db.Text
+  verifiedAt       DateTime? @map("verified_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("mfa_methods")
+}
+
+model AuthSession {
+  id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(255)
+  ipAddress        String?   @map("ip_address") @db.VarChar(45)
+  userAgent        String?   @map("user_agent") @db.Text
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("auth_sessions")
+}
+
+model Group {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String    @db.VarChar(160)
+  type           GroupType @default(CUSTOM)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      GroupMember[]
+
+  @@unique([organizationId, name])
+  @@map("groups")
+}
+
+model GroupMember {
+  groupId  String   @map("group_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  joinedAt DateTime @default(now()) @map("joined_at") @db.Timestamptz(3)
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+model Permission {
+  id          String  @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  code        String  @unique @db.VarChar(80)
+  name        String  @db.VarChar(120)
+  description String? @db.Text
+
+  rolePermissions RolePermission[]
+  aclEntries      ResourceAclEntry[]
+
+  @@map("permissions")
+}
+
+model Role {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  code           String   @db.VarChar(80)
+  name           String   @db.VarChar(120)
+  isSystem       Boolean  @default(false) @map("is_system")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions  RolePermission[]
+  bindings     RoleBinding[]
+  spaceMembers SpaceMember[]
+
+  @@unique([organizationId, code])
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model RoleBinding {
+  id            String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  roleId        String        @map("role_id") @db.Uuid
+  principalType PrincipalType @map("principal_type")
+  principalId   String        @map("principal_id") @db.Uuid
+  scopeType     ScopeType     @map("scope_type")
+  scopeId       String?       @map("scope_id") @db.Uuid
+  expiresAt     DateTime?     @map("expires_at") @db.Timestamptz(3)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, principalType, principalId, scopeType, scopeId])
+  @@index([principalType, principalId, scopeType, scopeId])
+  @@map("role_bindings")
+}
+
+model Space {
+  id                  String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  ownerOrganizationId String       @map("owner_organization_id") @db.Uuid
+  code                String       @unique @db.VarChar(80)
+  name                String       @db.VarChar(200)
+  quotaBytes          BigInt       @default(0) @map("quota_bytes")
+  usedBytes           BigInt       @default(0) @map("used_bytes")
+  status              RecordStatus @default(ACTIVE)
+  createdById         String       @map("created_by_id") @db.Uuid
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  ownerOrganization Organization    @relation("SpaceOwnerOrganization", fields: [ownerOrganizationId], references: [id], onDelete: Restrict)
+  createdBy         User            @relation("SpaceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  members           SpaceMember[]
+  nodes             ResourceNode[]
+  tags              Tag[]
+  uploadSessions    UploadSession[]
+
+  @@index([ownerOrganizationId, status])
+  @@map("spaces")
+}
+
+model SpaceMember {
+  spaceId       String        @map("space_id") @db.Uuid
+  principalType PrincipalType @map("principal_type")
+  principalId   String        @map("principal_id") @db.Uuid
+  roleId        String        @map("role_id") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  space Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  role  Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([spaceId, principalType, principalId])
+  @@index([principalType, principalId])
+  @@map("space_members")
+}
+
+model ResourceNode {
+  id             String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  spaceId        String         @map("space_id") @db.Uuid
+  parentId       String?        @map("parent_id") @db.Uuid
+  nodeType       NodeType       @map("node_type")
+  name           String         @db.VarChar(255)
+  normalizedName String         @map("normalized_name") @db.VarChar(255)
+  status         ResourceStatus @default(ACTIVE)
+  createdById    String         @map("created_by_id") @db.Uuid
+  deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  lockVersion    Int            @default(0) @map("lock_version")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  space               Space              @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  parent              ResourceNode?      @relation("ResourceTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children            ResourceNode[]     @relation("ResourceTree")
+  createdBy           User               @relation("NodeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  closureAsAncestor   ResourceClosure[]  @relation("ClosureAncestor")
+  closureAsDescendant ResourceClosure[]  @relation("ClosureDescendant")
+  asset               Asset?
+  aclEntries          ResourceAclEntry[]
+  uploadTargets       UploadSession[]    @relation("UploadTarget")
+
+  @@index([spaceId, parentId, status])
+  @@index([deletedAt])
+  @@map("resource_nodes")
+}
+
+model ResourceClosure {
+  ancestorId   String @map("ancestor_id") @db.Uuid
+  descendantId String @map("descendant_id") @db.Uuid
+  depth        Int
+
+  ancestor   ResourceNode @relation("ClosureAncestor", fields: [ancestorId], references: [id], onDelete: Cascade)
+  descendant ResourceNode @relation("ClosureDescendant", fields: [descendantId], references: [id], onDelete: Cascade)
+
+  @@id([ancestorId, descendantId])
+  @@index([descendantId, depth])
+  @@map("resource_closure")
+}
+
+model Asset {
+  id               String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  nodeId           String   @unique @map("node_id") @db.Uuid
+  currentVersionId String?  @unique @map("current_version_id") @db.Uuid
+  originalFileName String   @map("original_file_name") @db.VarChar(255)
+  mimeType         String   @map("mime_type") @db.VarChar(255)
+  category         String?  @db.VarChar(80)
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  node           ResourceNode   @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  currentVersion AssetVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions       AssetVersion[] @relation("AssetVersions")
+  tags           AssetTag[]
+
+  @@index([mimeType])
+  @@map("assets")
+}
+
+model StorageObject {
+  id              String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  bucket          String   @db.VarChar(120)
+  objectKey       String   @unique @map("object_key") @db.VarChar(1024)
+  checksumSha256  String   @map("checksum_sha256") @db.Char(64)
+  sizeBytes       BigInt   @map("size_bytes")
+  encryptionKeyId String?  @map("encryption_key_id") @db.VarChar(255)
+  referenceCount  Int      @default(1) @map("reference_count")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  sourceVersions AssetVersion[]
+  renditions     AssetRendition[]
+
+  @@index([checksumSha256, sizeBytes])
+  @@map("storage_objects")
+}
+
+model AssetVersion {
+  id              String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  assetId         String        @map("asset_id") @db.Uuid
+  versionNumber   Int           @map("version_number")
+  storageObjectId String        @map("storage_object_id") @db.Uuid
+  status          VersionStatus @default(QUARANTINED)
+  scanStatus      ScanStatus    @default(PENDING) @map("scan_status")
+  checksumSha256  String        @map("checksum_sha256") @db.Char(64)
+  sizeBytes       BigInt        @map("size_bytes")
+  mimeType        String        @map("mime_type") @db.VarChar(255)
+  createdById     String        @map("created_by_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  asset          Asset              @relation("AssetVersions", fields: [assetId], references: [id], onDelete: Cascade)
+  currentFor     Asset?             @relation("CurrentVersion")
+  storageObject  StorageObject      @relation(fields: [storageObjectId], references: [id], onDelete: Restrict)
+  createdBy      User               @relation("VersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  renditions     AssetRendition[]
+  processingJobs ProcessingJob[]
+  extraction     ContentExtraction?
+
+  @@unique([assetId, versionNumber])
+  @@index([status, scanStatus])
+  @@map("asset_versions")
+}
+
+model AssetRendition {
+  id              String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  assetVersionId  String          @map("asset_version_id") @db.Uuid
+  storageObjectId String          @map("storage_object_id") @db.Uuid
+  type            String          @db.VarChar(80)
+  variant         String          @default("default") @db.VarChar(80)
+  width           Int?
+  height          Int?
+  durationMs      Int?            @map("duration_ms")
+  status          RenditionStatus @default(PENDING)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  assetVersion  AssetVersion  @relation(fields: [assetVersionId], references: [id], onDelete: Cascade)
+  storageObject StorageObject @relation(fields: [storageObjectId], references: [id], onDelete: Restrict)
+
+  @@unique([assetVersionId, type, variant])
+  @@map("asset_renditions")
+}
+
+model ResourceAclEntry {
+  id             String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  resourceNodeId String        @map("resource_node_id") @db.Uuid
+  principalType  PrincipalType @map("principal_type")
+  principalId    String        @map("principal_id") @db.Uuid
+  permissionId   String        @map("permission_id") @db.Uuid
+  effect         AclEffect
+  expiresAt      DateTime?     @map("expires_at") @db.Timestamptz(3)
+  createdById    String        @map("created_by_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  resourceNode ResourceNode @relation(fields: [resourceNodeId], references: [id], onDelete: Cascade)
+  permission   Permission   @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("AclCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([resourceNodeId, principalType, principalId, permissionId])
+  @@index([principalType, principalId])
+  @@map("resource_acl_entries")
+}
+
+model Tag {
+  id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  spaceId   String   @map("space_id") @db.Uuid
+  name      String   @db.VarChar(100)
+  color     String?  @db.Char(7)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  space  Space      @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  assets AssetTag[]
+
+  @@unique([spaceId, name])
+  @@map("tags")
+}
+
+model AssetTag {
+  assetId String @map("asset_id") @db.Uuid
+  tagId   String @map("tag_id") @db.Uuid
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([assetId, tagId])
+  @@index([tagId])
+  @@map("asset_tags")
+}
+
+model UploadSession {
+  id             String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  spaceId        String       @map("space_id") @db.Uuid
+  targetNodeId   String?      @map("target_node_id") @db.Uuid
+  initiatedById  String       @map("initiated_by_id") @db.Uuid
+  uploadId       String?      @unique @map("upload_id") @db.VarChar(255)
+  objectKey      String       @map("object_key") @db.VarChar(1024)
+  fileName       String       @map("file_name") @db.VarChar(255)
+  sizeBytes      BigInt       @map("size_bytes")
+  mimeType       String       @map("mime_type") @db.VarChar(255)
+  checksumSha256 String?      @map("checksum_sha256") @db.Char(64)
+  status         UploadStatus @default(CREATED)
+  expiresAt      DateTime     @map("expires_at") @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  space       Space         @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  targetNode  ResourceNode? @relation("UploadTarget", fields: [targetNodeId], references: [id], onDelete: Restrict)
+  initiatedBy User          @relation("UploadInitiatedBy", fields: [initiatedById], references: [id], onDelete: Restrict)
+
+  @@index([initiatedById, status])
+  @@index([expiresAt])
+  @@map("upload_sessions")
+}
+
+model ProcessingJob {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  assetVersionId String    @map("asset_version_id") @db.Uuid
+  jobType        String    @map("job_type") @db.VarChar(80)
+  status         JobStatus @default(PENDING)
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5) @map("max_attempts")
+  availableAt    DateTime  @default(now()) @map("available_at") @db.Timestamptz(3)
+  lockedAt       DateTime? @map("locked_at") @db.Timestamptz(3)
+  errorMessage   String?   @map("error_message") @db.Text
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@map("processing_jobs")
+}
+
+model ContentExtraction {
+  id             String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  assetVersionId String                   @unique @map("asset_version_id") @db.Uuid
+  content        String                   @db.Text
+  language       String?                  @db.VarChar(20)
+  parserVersion  String                   @map("parser_version") @db.VarChar(80)
+  searchVector   Unsupported("tsvector")? @map("search_vector")
+  extractedAt    DateTime                 @default(now()) @map("extracted_at") @db.Timestamptz(3)
+
+  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id], onDelete: Cascade)
+
+  @@map("content_extractions")
+}
+
+model OutboxEvent {
+  id            String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  aggregateType String       @map("aggregate_type") @db.VarChar(80)
+  aggregateId   String       @map("aggregate_id") @db.Uuid
+  eventType     String       @map("event_type") @db.VarChar(160)
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  occurredAt    DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  publishedAt   DateTime?    @map("published_at") @db.Timestamptz(3)
+
+  @@index([status, occurredAt])
+  @@map("outbox_events")
+}
+
+model AuditEvent {
+  id           String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  occurredAt   DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  actorUserId  String?  @map("actor_user_id") @db.Uuid
+  action       String   @db.VarChar(120)
+  resourceType String?  @map("resource_type") @db.VarChar(80)
+  resourceId   String?  @map("resource_id") @db.Uuid
+  result       String   @db.VarChar(40)
+  ipAddress    String?  @map("ip_address") @db.VarChar(45)
+  userAgent    String?  @map("user_agent") @db.Text
+  requestId    String?  @map("request_id") @db.VarChar(100)
+  beforeData   Json?    @map("before_data")
+  afterData    Json?    @map("after_data")
+  details      Json?
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([resourceType, resourceId, occurredAt])
+  @@map("audit_events")
+}
+
+model Notification {
+  id        String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId    String             @map("user_id") @db.Uuid
+  type      String             @db.VarChar(100)
+  payload   Json
+  status    NotificationStatus @default(UNREAD)
+  readAt    DateTime?          @map("read_at") @db.Timestamptz(3)
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+  @@map("notifications")
+}
