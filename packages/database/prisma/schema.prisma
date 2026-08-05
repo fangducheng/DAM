@@ -258,12 +258,14 @@ model MfaMethod {
   type             MfaType
   label            String?   @db.VarChar(100)
   secretCiphertext String    @map("secret_ciphertext") @db.Text
+  lastUsedTimeStep BigInt?   @map("last_used_time_step")
   verifiedAt       DateTime? @map("verified_at") @db.Timestamptz(3)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   recoveryCodes MfaRecoveryCode[]
 
+  @@unique([userId, type])
   @@index([userId])
   @@map("mfa_methods")
 }
@@ -282,19 +284,23 @@ model MfaRecoveryCode {
 }
 
 model AuthSession {
-  id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  tokenFamilyId    String    @map("token_family_id") @db.Uuid
-  refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(255)
-  replacedById     String?   @unique @map("replaced_by_id") @db.Uuid
-  ipAddress        String?   @map("ip_address") @db.VarChar(45)
-  userAgent        String?   @map("user_agent") @db.Text
-  mfaVerifiedAt    DateTime? @map("mfa_verified_at") @db.Timestamptz(3)
-  lastUsedAt       DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
-  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
-  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
-  revokedReason    String?   @map("revoked_reason") @db.VarChar(120)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id                String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  tokenFamilyId     String    @map("token_family_id") @db.Uuid
+  refreshTokenHash  String    @unique @map("refresh_token_hash") @db.VarChar(255)
+  replacedById      String?   @unique @map("replaced_by_id") @db.Uuid
+  ipAddress         String?   @map("ip_address") @db.VarChar(45)
+  userAgent         String?   @map("user_agent") @db.Text
+  authenticatedAt   DateTime? @map("authenticated_at") @db.Timestamptz(3)
+  mfaVerifiedAt     DateTime? @map("mfa_verified_at") @db.Timestamptz(3)
+  mfaMethod         String?   @map("mfa_method") @db.VarChar(20)
+  mfaFailedAttempts Int       @default(0) @map("mfa_failed_attempts")
+  mfaLockedUntil    DateTime? @map("mfa_locked_until") @db.Timestamptz(3)
+  lastUsedAt        DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedReason     String?   @map("revoked_reason") @db.VarChar(120)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   replacedBy AuthSession? @relation("SessionRotation", fields: [replacedById], references: [id], onDelete: SetNull)

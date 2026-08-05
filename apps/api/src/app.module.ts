@@ -7,7 +7,8 @@ import { validateEnvironment } from '@dam/config';
 import { AppController } from './app.controller.js';
 import { AuthorizationModule } from './authorization/authorization.module.js';
 import { HealthModule } from './health/health.module.js';
-import { PrismaService } from './infrastructure/prisma.service.js';
+import { IdentityModule } from './identity/identity.module.js';
+import { InfrastructureModule } from './infrastructure/infrastructure.module.js';
 
 @Module({
   imports: [
@@ -37,11 +38,11 @@ import { PrismaService } from './infrastructure/prisma.service.js';
         };
       },
     }),
+    InfrastructureModule,
     HealthModule,
+    IdentityModule,
     AuthorizationModule,
   ],
   controllers: [AppController],
-  providers: [PrismaService],
-  exports: [PrismaService],
 })
 export class AppModule {}

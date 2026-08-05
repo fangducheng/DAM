@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 
+import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import { Logger as NestLogger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -9,6 +10,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module.js';
+import { ApiExceptionFilter } from './common/errors/api-exception.filter.js';
+import { validationException } from './common/errors/validation.js';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -25,8 +28,11 @@ async function bootstrap(): Promise<void> {
       transform: true,
       whitelist: true,
       forbidNonWhitelisted: true,
+      exceptionFactory: validationException,
     }),
   );
+  app.useGlobalFilters(new ApiExceptionFilter());
+  await app.register(cookie);
   await app.register(helmet, { contentSecurityPolicy: false });
 
   const config = app.get(ConfigService);

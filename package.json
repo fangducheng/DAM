@@ -22,6 +22,7 @@
     "db:format": "pnpm --filter @dam/database format",
     "db:validate": "pnpm --filter @dam/database validate",
     "db:migrate": "pnpm --filter @dam/database migrate",
+    "identity:bootstrap": "pnpm build:packages && pnpm --filter @dam/api bootstrap:identity",
     "infra:up": "docker compose up -d postgres redis minio minio-init",
     "infra:down": "docker compose down",
     "verify": "pnpm format:check && pnpm lint && pnpm db:validate && pnpm typecheck && pnpm test && pnpm build",
@@ -43,6 +44,7 @@
     "onlyBuiltDependencies": [
       "@prisma/client",
       "@prisma/engines",
+      "argon2",
       "esbuild",
       "prisma"
     ]
