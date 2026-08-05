@@ -39,8 +39,19 @@ enum PrincipalType {
 
 enum ScopeType {
   PLATFORM
+  TENANT
   ORGANIZATION
   SPACE
+}
+
+enum SpaceOwnerType {
+  TENANT
+  ORGANIZATION
+}
+
+enum InvitationType {
+  TENANT_ADMIN
+  ORGANIZATION_MEMBER
 }
 
 enum NodeType {
@@ -110,49 +121,122 @@ enum NotificationStatus {
   ARCHIVED
 }
 
+model Tenant {
+  id                   String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  code                 String       @unique @db.VarChar(64)
+  name                 String       @db.VarChar(200)
+  status               RecordStatus @default(ACTIVE)
+  authorizationVersion BigInt       @default(0) @map("authorization_version")
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  securityPolicy TenantSecurityPolicy?
+  organizations  Organization[]
+  users          User[]
+  groups         Group[]
+  roles          Role[]
+  spaces         Space[]
+  invitations    Invitation[]
+  roleBindings   RoleBinding[]
+  aclEntries     ResourceAclEntry[]
+  auditEvents    AuditEvent[]
+
+  @@map("tenants")
+}
+
+model TenantSecurityPolicy {
+  tenantId              String   @id @map("tenant_id") @db.Uuid
+  requireAdminMfa       Boolean  @default(true) @map("require_admin_mfa")
+  requireMemberMfa      Boolean  @default(false) @map("require_member_mfa")
+  accessTokenTtlMinutes Int      @default(15) @map("access_token_ttl_minutes")
+  refreshTokenTtlDays   Int      @default(30) @map("refresh_token_ttl_days")
+  maxPasswordAttempts   Int      @default(5) @map("max_password_attempts")
+  passwordLockMinutes   Int      @default(15) @map("password_lock_minutes")
+  maxMfaAttempts        Int      @default(5) @map("max_mfa_attempts")
+  mfaLockMinutes        Int      @default(15) @map("mfa_lock_minutes")
+  invitationTtlHours    Int      @default(24) @map("invitation_ttl_hours")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_security_policies")
+}
+
 model Organization {
-  id        String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  code      String       @unique @db.VarChar(64)
-  name      String       @db.VarChar(200)
-  status    RecordStatus @default(ACTIVE)
-  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                   String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId             String       @map("tenant_id") @db.Uuid
+  parentOrganizationId String?      @map("parent_organization_id") @db.Uuid
+  code                 String       @db.VarChar(64)
+  name                 String       @db.VarChar(200)
+  status               RecordStatus @default(ACTIVE)
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users       User[]
-  groups      Group[]
-  roles       Role[]
-  ownedSpaces Space[] @relation("SpaceOwnerOrganization")
+  tenant             Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parentOrganization Organization?            @relation("OrganizationTree", fields: [parentOrganizationId], references: [id], onDelete: Restrict)
+  childOrganizations Organization[]           @relation("OrganizationTree")
+  memberships        OrganizationMembership[]
+  groups             Group[]
+  roles              Role[]
+  ownedSpaces        Space[]                  @relation("SpaceOwnerOrganization")
+  invitations        Invitation[]
 
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@index([parentOrganizationId])
   @@map("organizations")
 }
 
 model User {
-  id             String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  organizationId String     @map("organization_id") @db.Uuid
-  loginName      String     @unique @map("login_name") @db.VarChar(100)
-  email          String     @unique @db.VarChar(320)
-  displayName    String     @map("display_name") @db.VarChar(160)
-  status         UserStatus @default(INVITED)
-  lastLoginAt    DateTime?  @map("last_login_at") @db.Timestamptz(3)
-  lockVersion    Int        @default(0) @map("lock_version")
-  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id          String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId    String     @map("tenant_id") @db.Uuid
+  loginName   String     @map("login_name") @db.VarChar(100)
+  email       String     @db.VarChar(320)
+  displayName String     @map("display_name") @db.VarChar(160)
+  status      UserStatus @default(INVITED)
+  lastLoginAt DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  lockVersion Int        @default(0) @map("lock_version")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  credential        UserCredential?
-  mfaMethods        MfaMethod[]
-  sessions          AuthSession[]
-  groupMemberships  GroupMember[]
-  createdSpaces     Space[]            @relation("SpaceCreatedBy")
-  createdNodes      ResourceNode[]     @relation("NodeCreatedBy")
-  createdVersions   AssetVersion[]     @relation("VersionCreatedBy")
-  initiatedUploads  UploadSession[]    @relation("UploadInitiatedBy")
-  createdAclEntries ResourceAclEntry[] @relation("AclCreatedBy")
-  auditEvents       AuditEvent[]       @relation("AuditActor")
-  notifications     Notification[]
+  tenant              Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationMembers OrganizationMembership[]
+  credential          UserCredential?
+  mfaMethods          MfaMethod[]
+  sessions            AuthSession[]
+  groupMemberships    GroupMember[]
+  sentInvitations     Invitation[]             @relation("InvitationSentBy")
+  acceptedInvitations Invitation[]             @relation("InvitationAcceptedBy")
+  createdSpaces       Space[]                  @relation("SpaceCreatedBy")
+  createdNodes        ResourceNode[]           @relation("NodeCreatedBy")
+  createdVersions     AssetVersion[]           @relation("VersionCreatedBy")
+  initiatedUploads    UploadSession[]          @relation("UploadInitiatedBy")
+  createdAclEntries   ResourceAclEntry[]       @relation("AclCreatedBy")
+  auditEvents         AuditEvent[]             @relation("AuditActor")
+  notifications       Notification[]
 
-  @@index([organizationId, status])
+  @@unique([tenantId, loginName])
+  @@unique([tenantId, email])
+  @@index([tenantId, status])
   @@map("users")
+}
+
+model OrganizationMembership {
+  organizationId String       @map("organization_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  title          String?      @db.VarChar(160)
+  isPrimary      Boolean      @default(false) @map("is_primary")
+  status         RecordStatus @default(ACTIVE)
+  joinedAt       DateTime     @default(now()) @map("joined_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, userId])
+  @@index([userId, status])
+  @@map("organization_memberships")
 }
 
 model UserCredential {
@@ -177,40 +261,65 @@ model MfaMethod {
   verifiedAt       DateTime? @map("verified_at") @db.Timestamptz(3)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recoveryCodes MfaRecoveryCode[]
 
   @@index([userId])
   @@map("mfa_methods")
 }
 
+model MfaRecoveryCode {
+  id          String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  mfaMethodId String    @map("mfa_method_id") @db.Uuid
+  codeHash    String    @map("code_hash") @db.VarChar(255)
+  usedAt      DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  mfaMethod MfaMethod @relation(fields: [mfaMethodId], references: [id], onDelete: Cascade)
+
+  @@index([mfaMethodId, usedAt])
+  @@map("mfa_recovery_codes")
+}
+
 model AuthSession {
   id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   userId           String    @map("user_id") @db.Uuid
+  tokenFamilyId    String    @map("token_family_id") @db.Uuid
   refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(255)
+  replacedById     String?   @unique @map("replaced_by_id") @db.Uuid
   ipAddress        String?   @map("ip_address") @db.VarChar(45)
   userAgent        String?   @map("user_agent") @db.Text
+  mfaVerifiedAt    DateTime? @map("mfa_verified_at") @db.Timestamptz(3)
+  lastUsedAt       DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
   expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedReason    String?   @map("revoked_reason") @db.VarChar(120)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy AuthSession? @relation("SessionRotation", fields: [replacedById], references: [id], onDelete: SetNull)
+  replaces   AuthSession? @relation("SessionRotation")
 
   @@index([userId, expiresAt])
+  @@index([tokenFamilyId, revokedAt])
   @@map("auth_sessions")
 }
 
 model Group {
   id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  organizationId String    @map("organization_id") @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
   name           String    @db.VarChar(160)
   type           GroupType @default(CUSTOM)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   members      GroupMember[]
 
-  @@unique([organizationId, name])
+  @@unique([tenantId, organizationId, name])
+  @@index([tenantId, type])
   @@map("groups")
 }
 
@@ -227,6 +336,34 @@ model GroupMember {
   @@map("group_members")
 }
 
+model Invitation {
+  id               String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId         String         @map("tenant_id") @db.Uuid
+  organizationId   String?        @map("organization_id") @db.Uuid
+  initialRoleId    String?        @map("initial_role_id") @db.Uuid
+  invitedById      String         @map("invited_by_id") @db.Uuid
+  acceptedByUserId String?        @map("accepted_by_user_id") @db.Uuid
+  type             InvitationType
+  email            String         @db.VarChar(320)
+  loginName        String?        @map("login_name") @db.VarChar(100)
+  displayName      String?        @map("display_name") @db.VarChar(160)
+  tokenHash        String         @unique @map("token_hash") @db.Char(64)
+  expiresAt        DateTime       @map("expires_at") @db.Timestamptz(3)
+  acceptedAt       DateTime?      @map("accepted_at") @db.Timestamptz(3)
+  revokedAt        DateTime?      @map("revoked_at") @db.Timestamptz(3)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  initialRole    Role?         @relation("InvitationInitialRole", fields: [initialRoleId], references: [id], onDelete: Restrict)
+  invitedBy      User          @relation("InvitationSentBy", fields: [invitedById], references: [id], onDelete: Restrict)
+  acceptedByUser User?         @relation("InvitationAcceptedBy", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, email, expiresAt])
+  @@index([organizationId, expiresAt])
+  @@map("invitations")
+}
+
 model Permission {
   id          String  @id @default(dbgenerated("uuidv7()")) @db.Uuid
   code        String  @unique @db.VarChar(80)
@@ -241,19 +378,22 @@ model Permission {
 
 model Role {
   id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId       String?  @map("tenant_id") @db.Uuid
   organizationId String?  @map("organization_id") @db.Uuid
-  code           String   @db.VarChar(80)
+  code           String   @unique @db.VarChar(80)
   name           String   @db.VarChar(120)
   isSystem       Boolean  @default(false) @map("is_system")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  tenant       Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   organization Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   permissions  RolePermission[]
   bindings     RoleBinding[]
   spaceMembers SpaceMember[]
+  invitations  Invitation[]     @relation("InvitationInitialRole")
 
-  @@unique([organizationId, code])
+  @@index([tenantId, organizationId])
   @@map("roles")
 }
 
@@ -270,6 +410,7 @@ model RolePermission {
 
 model RoleBinding {
   id            String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId      String?       @map("tenant_id") @db.Uuid
   roleId        String        @map("role_id") @db.Uuid
   principalType PrincipalType @map("principal_type")
   principalId   String        @map("principal_id") @db.Uuid
@@ -278,32 +419,39 @@ model RoleBinding {
   expiresAt     DateTime?     @map("expires_at") @db.Timestamptz(3)
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role   Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, principalType, principalId, scopeType, scopeId])
+  @@index([tenantId, scopeType, scopeId])
   @@index([principalType, principalId, scopeType, scopeId])
   @@map("role_bindings")
 }
 
 model Space {
-  id                  String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  ownerOrganizationId String       @map("owner_organization_id") @db.Uuid
-  code                String       @unique @db.VarChar(80)
-  name                String       @db.VarChar(200)
-  quotaBytes          BigInt       @default(0) @map("quota_bytes")
-  usedBytes           BigInt       @default(0) @map("used_bytes")
-  status              RecordStatus @default(ACTIVE)
-  createdById         String       @map("created_by_id") @db.Uuid
-  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                  String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId            String         @map("tenant_id") @db.Uuid
+  ownerType           SpaceOwnerType @map("owner_type")
+  ownerOrganizationId String?        @map("owner_organization_id") @db.Uuid
+  code                String         @db.VarChar(80)
+  name                String         @db.VarChar(200)
+  quotaBytes          BigInt         @default(0) @map("quota_bytes")
+  usedBytes           BigInt         @default(0) @map("used_bytes")
+  status              RecordStatus   @default(ACTIVE)
+  createdById         String         @map("created_by_id") @db.Uuid
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  ownerOrganization Organization    @relation("SpaceOwnerOrganization", fields: [ownerOrganizationId], references: [id], onDelete: Restrict)
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ownerOrganization Organization?   @relation("SpaceOwnerOrganization", fields: [ownerOrganizationId], references: [id], onDelete: Restrict)
   createdBy         User            @relation("SpaceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   members           SpaceMember[]
   nodes             ResourceNode[]
   tags              Tag[]
   uploadSessions    UploadSession[]
 
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
   @@index([ownerOrganizationId, status])
   @@map("spaces")
 }
@@ -449,6 +597,7 @@ model AssetRendition {
 
 model ResourceAclEntry {
   id             String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId       String        @map("tenant_id") @db.Uuid
   resourceNodeId String        @map("resource_node_id") @db.Uuid
   principalType  PrincipalType @map("principal_type")
   principalId    String        @map("principal_id") @db.Uuid
@@ -458,11 +607,13 @@ model ResourceAclEntry {
   createdById    String        @map("created_by_id") @db.Uuid
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   resourceNode ResourceNode @relation(fields: [resourceNodeId], references: [id], onDelete: Cascade)
   permission   Permission   @relation(fields: [permissionId], references: [id], onDelete: Cascade)
   createdBy    User         @relation("AclCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@unique([resourceNodeId, principalType, principalId, permissionId])
+  @@index([tenantId, resourceNodeId])
   @@index([principalType, principalId])
   @@map("resource_acl_entries")
 }
@@ -568,6 +719,7 @@ model OutboxEvent {
 
 model AuditEvent {
   id           String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId     String?  @map("tenant_id") @db.Uuid
   occurredAt   DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
   actorUserId  String?  @map("actor_user_id") @db.Uuid
   action       String   @db.VarChar(120)
@@ -581,9 +733,11 @@ model AuditEvent {
   afterData    Json?    @map("after_data")
   details      Json?
 
-  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  actor  User?   @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([occurredAt])
+  @@index([tenantId, occurredAt])
   @@index([actorUserId, occurredAt])
   @@index([resourceType, resourceId, occurredAt])
   @@map("audit_events")

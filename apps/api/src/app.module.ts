@@ -5,6 +5,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { validateEnvironment } from '@dam/config';
 
 import { AppController } from './app.controller.js';
+import { AuthorizationModule } from './authorization/authorization.module.js';
 import { HealthModule } from './health/health.module.js';
 import { PrismaService } from './infrastructure/prisma.service.js';
 
@@ -37,6 +38,7 @@ import { PrismaService } from './infrastructure/prisma.service.js';
       },
     }),
     HealthModule,
+    AuthorizationModule,
   ],
   controllers: [AppController],
   providers: [PrismaService],

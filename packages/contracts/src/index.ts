@@ -27,17 +27,96 @@ export interface ReadinessResponse {
 }
 
 export const permissionCodes = [
-  'VIEW_METADATA',
-  'PREVIEW',
-  'DOWNLOAD',
-  'UPLOAD',
-  'CREATE_FOLDER',
-  'EDIT_METADATA',
-  'CREATE_VERSION',
-  'DELETE',
-  'RESTORE',
-  'MANAGE_PERMISSION',
-  'MANAGE_SPACE',
+  'platform.manage',
+  'audit.read',
+  'tenant.manage',
+  'organization.manage',
+  'organization.users.manage',
+  'space.create',
+  'space.manage',
+  'space.members.manage',
+  'node.view',
+  'node.preview',
+  'node.download',
+  'node.create',
+  'node.update',
+  'node.delete',
+  'node.permissions.manage',
 ] as const;
 
 export type PermissionCode = (typeof permissionCodes)[number];
+
+export const systemRoleCodes = [
+  'platform_admin',
+  'platform_auditor',
+  'organization_admin',
+  'organization_member',
+  'space_manager',
+  'editor',
+  'contributor',
+  'viewer',
+  'restricted',
+] as const;
+
+export type SystemRoleCode = (typeof systemRoleCodes)[number];
+
+export const systemRolePermissions = {
+  platform_admin: permissionCodes,
+  platform_auditor: ['audit.read'],
+  organization_admin: ['organization.manage', 'organization.users.manage', 'space.create'],
+  organization_member: [],
+  space_manager: [
+    'space.manage',
+    'space.members.manage',
+    'node.view',
+    'node.preview',
+    'node.download',
+    'node.create',
+    'node.update',
+    'node.delete',
+    'node.permissions.manage',
+  ],
+  editor: ['node.view', 'node.preview', 'node.download', 'node.create', 'node.update'],
+  contributor: ['node.view', 'node.preview', 'node.download', 'node.create', 'node.update'],
+  viewer: ['node.view', 'node.preview', 'node.download'],
+  restricted: [],
+} as const satisfies Record<SystemRoleCode, readonly PermissionCode[]>;
+
+export const apiErrorCodes = [
+  'VALIDATION_FAILED',
+  'AUTHENTICATION_FAILED',
+  'SESSION_EXPIRED',
+  'MFA_REQUIRED',
+  'MFA_INVALID',
+  'ACCESS_DENIED',
+  'RESOURCE_NOT_FOUND',
+  'VERSION_CONFLICT',
+  'INVITATION_INVALID',
+  'INVITATION_EXPIRED',
+  'TOO_MANY_ATTEMPTS',
+  'INTERNAL_ERROR',
+] as const;
+
+export type ApiErrorCode = (typeof apiErrorCodes)[number];
+
+export interface ApiFieldError {
+  field: string;
+  code: string;
+  message: string;
+}
+
+export interface ApiErrorResponse {
+  statusCode: number;
+  code: ApiErrorCode;
+  message: string;
+  requestId: string;
+  timestamp: string;
+  fieldErrors?: ApiFieldError[];
+}
+
+export interface AuthenticatedUser {
+  userId: string;
+  tenantId: string;
+  sessionId: string;
+  authenticationMethods: readonly ('password' | 'totp' | 'recovery_code')[];
+}
