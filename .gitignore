@@ -10,6 +10,6 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+.superpowers/
 apps/web/.vite/
 packages/database/prisma/dev.db
-
