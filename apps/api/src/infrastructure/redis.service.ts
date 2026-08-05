@@ -17,10 +17,7 @@ export class RedisService {
 
     try {
       await client.connect();
-      const response = await client.ping();
-      if (response !== 'PONG') {
-        throw new Error(`Unexpected Redis response: ${response}`);
-      }
+      await client.ping();
     } finally {
       client.disconnect();
     }

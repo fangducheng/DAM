@@ -1,11 +1,12 @@
 import 'reflect-metadata';
 
 import helmet from '@fastify/helmet';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger as NestLogger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module.js';
 
@@ -44,7 +45,7 @@ async function bootstrap(): Promise<void> {
 
   const port = config.getOrThrow<number>('API_PORT');
   await app.listen(port, '0.0.0.0');
-  Logger.log(`DAM API listening on http://localhost:${port}`, 'Bootstrap');
+  NestLogger.log(`DAM API listening on http://localhost:${port}`, 'Bootstrap');
 }
 
 void bootstrap();
