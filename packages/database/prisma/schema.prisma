@@ -317,6 +317,7 @@ model Group {
   organizationId String?   @map("organization_id") @db.Uuid
   name           String    @db.VarChar(160)
   type           GroupType @default(CUSTOM)
+  status         RecordStatus @default(ACTIVE)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -325,7 +326,7 @@ model Group {
   members      GroupMember[]
 
   @@unique([tenantId, organizationId, name])
-  @@index([tenantId, type])
+  @@index([tenantId, status, type])
   @@map("groups")
 }
 

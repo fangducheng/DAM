@@ -44,6 +44,7 @@ export const environmentSchema = z
       .transform((value) => value === 'true')
       .default(false),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100).default(10),
+    AUTHORIZATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     APP_VERSION: z.string().default('0.1.0'),
   })
