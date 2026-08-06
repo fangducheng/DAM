@@ -74,6 +74,34 @@ export class AuthorizationService {
     }
   }
 
+  async canEnterSpace(actor: AuthenticatedUser, spaceId: string): Promise<boolean> {
+    if (await this.can(actor, 'space.manage', { type: 'SPACE', id: spaceId })) {
+      return true;
+    }
+    const [space, subject] = await Promise.all([
+      this.prisma.space.findFirst({
+        where: { id: spaceId, tenantId: actor.tenantId, status: 'ACTIVE' },
+        select: { id: true },
+      }),
+      this.subject(actor),
+    ]);
+    if (space === null) {
+      return false;
+    }
+    return (
+      (await this.prisma.spaceMember.findFirst({
+        where: {
+          spaceId,
+          OR: subject.principals.map(({ type, id }) => ({
+            principalType: type,
+            principalId: id,
+          })),
+        },
+        select: { spaceId: true },
+      })) !== null
+    );
+  }
+
   async evaluate(
     actor: AuthenticatedUser,
     permission: PermissionCode,
