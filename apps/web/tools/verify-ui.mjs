@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,9 @@ const executablePath =
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const outputDirectory = join(tmpdir(), 'dam-ui-verification');
 await mkdir(outputDirectory, { recursive: true });
+const uploadFixtureName = `asset-upload-verification-${Date.now().toString(36)}.pdf`;
+const uploadFixture = join(outputDirectory, uploadFixtureName);
+await writeFile(uploadFixture, Buffer.alloc(9 * 1024 * 1024, 0x41));
 
 const browser = await chromium.launch({ executablePath, headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -74,13 +77,43 @@ try {
   await page.screenshot({ path: desktopSpaces, fullPage: true });
   const desktopSpacesOverflow = await hasPageOverflow(page);
 
+  await page.getByRole('link', { name: '资产库' }).click();
+  await page.waitForURL('**/assets');
+  await waitForView(page);
+  if (!(await page.getByRole('button', { name: /验收资料/ }).isVisible())) {
+    await page.getByRole('button', { name: '新建文件夹' }).click();
+    await page.getByLabel('文件夹名称').fill('验收资料');
+    await page.getByRole('dialog').getByRole('button', { name: '创建', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+  }
+  await page.getByRole('button', { name: /验收资料/ }).click();
+  await waitForView(page);
+  await page.locator('input[type="file"]').setInputFiles(uploadFixture);
+  await page.getByRole('button', { name: uploadFixtureName }).waitFor({
+    state: 'visible',
+    timeout: 60_000,
+  });
+  const desktopAssets = join(outputDirectory, 'assets-desktop.png');
+  await page.screenshot({ path: desktopAssets, fullPage: true });
+  const desktopAssetsOverflow = await hasPageOverflow(page);
+  await page
+    .getByRole('button', { name: uploadFixtureName })
+    .locator('..')
+    .getByTitle('版本历史')
+    .click();
+  await page.getByRole('dialog').waitFor({ state: 'visible' });
+  await page.getByRole('dialog').getByText('V1', { exact: true }).waitFor();
+  const desktopVersions = join(outputDirectory, 'asset-versions-desktop.png');
+  await page.screenshot({ path: desktopVersions, fullPage: true });
+  await page.getByRole('dialog').getByTitle('关闭').click();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
-  const mobileSpaces = join(outputDirectory, 'spaces-mobile.png');
-  await page.screenshot({ path: mobileSpaces, fullPage: true });
-  const mobileSpacesOverflow = await hasPageOverflow(page);
+  const mobileAssets = join(outputDirectory, 'assets-mobile.png');
+  await page.screenshot({ path: mobileAssets, fullPage: true });
+  const mobileAssetsOverflow = await hasPageOverflow(page);
 
-  await page.getByTitle('目录权限').click();
+  await page.getByRole('link', { name: '目录权限' }).click();
   await page.waitForURL('**/permissions');
   const mobilePermissions = join(outputDirectory, 'permissions-mobile.png');
   await page.screenshot({ path: mobilePermissions, fullPage: true });
@@ -91,14 +124,17 @@ try {
       desktopStatus,
       desktopOrganizations,
       desktopSpaces,
-      mobileSpaces,
+      desktopAssets,
+      desktopVersions,
+      mobileAssets,
       mobilePermissions,
     },
     overflow: {
       desktopStatus: desktopStatusOverflow,
       desktopOrganizations: desktopOrganizationsOverflow,
       desktopSpaces: desktopSpacesOverflow,
-      mobileSpaces: mobileSpacesOverflow,
+      desktopAssets: desktopAssetsOverflow,
+      mobileAssets: mobileAssetsOverflow,
       mobilePermissions: mobilePermissionsOverflow,
     },
     consoleErrors,
@@ -119,6 +155,7 @@ try {
 } finally {
   await context.close();
   await browser.close();
+  await unlink(uploadFixture).catch(() => undefined);
 }
 
 /**

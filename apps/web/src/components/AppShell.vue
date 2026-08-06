@@ -3,6 +3,7 @@ import {
   Box,
   Building2,
   FolderKanban,
+  Files,
   KeyRound,
   LogOut,
   Server,
@@ -24,6 +25,7 @@ const navigation = [
   { to: '/organizations', label: '组织与成员', icon: Building2 },
   { to: '/groups', label: '共享群组', icon: UsersRound },
   { to: '/spaces', label: '业务空间', icon: FolderKanban },
+  { to: '/assets', label: '资产库', icon: Files },
   { to: '/permissions', label: '目录权限', icon: KeyRound },
   { to: '/sessions', label: '登录会话', icon: ShieldCheck },
 ];

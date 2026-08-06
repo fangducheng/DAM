@@ -10,7 +10,8 @@
     "start": "node --enable-source-maps dist/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:identity:integration": "vitest run src/identity/identity.integration.spec.ts"
+    "test:identity:integration": "vitest run src/identity/identity.integration.spec.ts",
+    "test:asset:integration": "vitest run src/resource/asset-workflow.integration.spec.ts"
   },
   "dependencies": {
     "@dam/config": "workspace:*",

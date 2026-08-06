@@ -45,6 +45,10 @@ export const environmentSchema = z
       .default(false),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100).default(10),
     AUTHORIZATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+    ASSET_UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(24),
+    ASSET_UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+    ASSET_READ_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(900).default(60),
+    ASSET_PROCESSING_MODE: z.enum(['deferred', 'local-bypass']).default('local-bypass'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     APP_VERSION: z.string().default('0.1.0'),
   })
@@ -75,6 +79,14 @@ export const environmentSchema = z
         code: 'custom',
         path: ['COOKIE_SECURE'],
         message: 'COOKIE_SECURE must be true in production',
+      });
+    }
+
+    if (environment.ASSET_PROCESSING_MODE === 'local-bypass') {
+      context.addIssue({
+        code: 'custom',
+        path: ['ASSET_PROCESSING_MODE'],
+        message: 'ASSET_PROCESSING_MODE must be deferred in production',
       });
     }
   });

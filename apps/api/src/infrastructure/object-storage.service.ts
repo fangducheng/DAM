@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from 'minio';
@@ -24,5 +26,65 @@ export class ObjectStorageService {
     if (!exists) {
       throw new Error(`Required bucket '${this.bucket}' does not exist`);
     }
+  }
+
+  bucketName(): string {
+    return this.bucket;
+  }
+
+  initiateMultipart(objectKey: string, mimeType: string): Promise<string> {
+    return this.client.initiateNewMultipartUpload(this.bucket, objectKey, {
+      'Content-Type': mimeType,
+    });
+  }
+
+  presignMultipartPart(
+    objectKey: string,
+    uploadId: string,
+    partNumber: number,
+    expiresSeconds: number,
+  ): Promise<string> {
+    return this.client.presignedUrl('PUT', this.bucket, objectKey, expiresSeconds, {
+      partNumber: String(partNumber),
+      uploadId,
+    });
+  }
+
+  async completeMultipart(
+    objectKey: string,
+    uploadId: string,
+    parts: Array<{ part: number; etag: string }>,
+  ): Promise<void> {
+    await this.client.completeMultipartUpload(this.bucket, objectKey, uploadId, parts);
+  }
+
+  abortMultipart(objectKey: string, uploadId: string): Promise<void> {
+    return this.client.abortMultipartUpload(this.bucket, objectKey, uploadId);
+  }
+
+  async objectSize(objectKey: string): Promise<bigint> {
+    const stat = await this.client.statObject(this.bucket, objectKey);
+    return BigInt(stat.size);
+  }
+
+  async sha256(objectKey: string): Promise<string> {
+    const stream = await this.client.getObject(this.bucket, objectKey);
+    const hash = createHash('sha256');
+    for await (const chunk of stream) {
+      hash.update(chunk as Buffer);
+    }
+    return hash.digest('hex');
+  }
+
+  removeObject(objectKey: string): Promise<void> {
+    return this.client.removeObject(this.bucket, objectKey);
+  }
+
+  presignRead(
+    objectKey: string,
+    expiresSeconds: number,
+    responseHeaders: Record<string, string>,
+  ): Promise<string> {
+    return this.client.presignedGetObject(this.bucket, objectKey, expiresSeconds, responseHeaders);
   }
 }

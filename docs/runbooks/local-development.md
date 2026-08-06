@@ -53,6 +53,13 @@ Bearer Access Token and a rotating `HttpOnly`, `SameSite=Lax` Refresh Cookie. Lo
 `COOKIE_SECURE=false`; production configuration rejects local default secrets and requires
 `COOKIE_SECURE=true`.
 
+Browser uploads use MinIO multipart URLs directly, so the local MinIO container allows only the
+configured localhost Web origins through `MINIO_API_CORS_ALLOW_ORIGIN`. The default
+`ASSET_PROCESSING_MODE=local-bypass` keeps the core workflow usable without ClamAV on this 8 GB
+workstation and records versions with scan status `SKIPPED`. It never records a bypassed file as
+`CLEAN`, and production environment validation rejects this mode. Use `deferred` whenever files
+must remain quarantined for a processing worker.
+
 ## Common failures
 
 - Port `5432` belongs to another local project. DAM deliberately uses `5433`.

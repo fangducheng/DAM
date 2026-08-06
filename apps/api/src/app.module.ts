@@ -9,6 +9,7 @@ import { AuthorizationModule } from './authorization/authorization.module.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/identity.module.js';
 import { InfrastructureModule } from './infrastructure/infrastructure.module.js';
+import { ResourceModule } from './resource/resource.module.js';
 import { SpaceModule } from './space/space.module.js';
 import { TenantModule } from './tenant/tenant.module.js';
 
@@ -44,6 +45,7 @@ import { TenantModule } from './tenant/tenant.module.js';
     HealthModule,
     IdentityModule,
     AuthorizationModule,
+    ResourceModule,
     TenantModule,
     SpaceModule,
   ],

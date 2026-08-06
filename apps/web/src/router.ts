@@ -34,6 +34,7 @@ export const router = createRouter({
         { path: 'organizations', component: () => import('./views/OrganizationsView.vue') },
         { path: 'groups', component: () => import('./views/GroupsView.vue') },
         { path: 'spaces', component: () => import('./views/SpacesView.vue') },
+        { path: 'assets', component: () => import('./views/AssetsView.vue') },
         { path: 'permissions', component: () => import('./views/PermissionsView.vue') },
       ],
     },

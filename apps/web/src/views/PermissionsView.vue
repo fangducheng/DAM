@@ -8,7 +8,8 @@ import {
   ShieldX,
   Trash2,
 } from '@lucide/vue';
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { useRoute } from 'vue-router';
 
 import { permissionCodes, type PermissionCode } from '@dam/contracts';
 
@@ -17,6 +18,8 @@ import { notify, notifyError } from '../stores/notifications';
 
 type PrincipalType = 'USER' | 'GROUP' | 'ORGANIZATION';
 type Effect = 'ALLOW' | 'DENY';
+
+const route = useRoute();
 
 interface AclEntry {
   id: string;
@@ -57,6 +60,14 @@ const form = reactive({
 const explainPermission = ref<PermissionCode>('node.view');
 const directCount = computed(() => entries.value.filter((entry) => !entry.inherited).length);
 const inheritedCount = computed(() => entries.value.filter((entry) => entry.inherited).length);
+
+onMounted(() => {
+  const routeNodeId = route.query.nodeId;
+  if (typeof routeNodeId === 'string') {
+    nodeId.value = routeNodeId;
+    void load();
+  }
+});
 
 async function load(): Promise<void> {
   if (!nodeId.value) return;

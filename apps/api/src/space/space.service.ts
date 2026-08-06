@@ -103,6 +103,20 @@ export class SpaceService {
           },
           select: this.spaceSelection(),
         });
+        const root = await database.resourceNode.create({
+          data: {
+            spaceId: created.id,
+            nodeType: 'FOLDER',
+            name: created.name,
+            normalizedName: '__root__',
+            isRoot: true,
+            createdById: actor.userId,
+          },
+          select: { id: true },
+        });
+        await database.resourceClosure.create({
+          data: { ancestorId: root.id, descendantId: root.id, depth: 0 },
+        });
         await database.spaceMember.create({
           data: {
             spaceId: created.id,
@@ -251,7 +265,9 @@ export class SpaceService {
       createdAt: true,
       updatedAt: true,
       ownerOrganization: { select: { code: true, name: true } },
-      _count: { select: { members: true, nodes: true } },
+      _count: {
+        select: { members: true, nodes: { where: { isRoot: false } } },
+      },
     } as const;
   }
 

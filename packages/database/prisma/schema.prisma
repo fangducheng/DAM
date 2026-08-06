@@ -77,6 +77,7 @@ enum VersionStatus {
 enum ScanStatus {
   PENDING
   CLEAN
+  SKIPPED
   INFECTED
   ERROR
 }
@@ -485,9 +486,11 @@ model ResourceNode {
   nodeType       NodeType       @map("node_type")
   name           String         @db.VarChar(255)
   normalizedName String         @map("normalized_name") @db.VarChar(255)
+  isRoot         Boolean        @default(false) @map("is_root")
   status         ResourceStatus @default(ACTIVE)
   createdById    String         @map("created_by_id") @db.Uuid
   deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  deletionBatchId String?       @map("deletion_batch_id") @db.Uuid
   lockVersion    Int            @default(0) @map("lock_version")
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -503,7 +506,9 @@ model ResourceNode {
   uploadTargets       UploadSession[]    @relation("UploadTarget")
 
   @@index([spaceId, parentId, status])
+  @@index([spaceId, isRoot])
   @@index([deletedAt])
+  @@index([deletionBatchId])
   @@map("resource_nodes")
 }
 
@@ -535,6 +540,7 @@ model Asset {
   currentVersion AssetVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
   versions       AssetVersion[] @relation("AssetVersions")
   tags           AssetTag[]
+  uploadSessions UploadSession[]
 
   @@index([mimeType])
   @@map("assets")
@@ -655,6 +661,7 @@ model UploadSession {
   id             String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
   spaceId        String       @map("space_id") @db.Uuid
   targetNodeId   String?      @map("target_node_id") @db.Uuid
+  assetId        String?      @map("asset_id") @db.Uuid
   initiatedById  String       @map("initiated_by_id") @db.Uuid
   uploadId       String?      @unique @map("upload_id") @db.VarChar(255)
   objectKey      String       @map("object_key") @db.VarChar(1024)
@@ -669,11 +676,26 @@ model UploadSession {
 
   space       Space         @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   targetNode  ResourceNode? @relation("UploadTarget", fields: [targetNodeId], references: [id], onDelete: Restrict)
+  asset       Asset?        @relation(fields: [assetId], references: [id], onDelete: Restrict)
   initiatedBy User          @relation("UploadInitiatedBy", fields: [initiatedById], references: [id], onDelete: Restrict)
+  parts       UploadPart[]
 
   @@index([initiatedById, status])
   @@index([expiresAt])
   @@map("upload_sessions")
+}
+
+model UploadPart {
+  uploadSessionId String   @map("upload_session_id") @db.Uuid
+  partNumber      Int      @map("part_number")
+  etag            String   @db.VarChar(128)
+  sizeBytes       BigInt   @map("size_bytes")
+  recordedAt      DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  uploadSession UploadSession @relation(fields: [uploadSessionId], references: [id], onDelete: Cascade)
+
+  @@id([uploadSessionId, partNumber])
+  @@map("upload_parts")
 }
 
 model ProcessingJob {
