@@ -29,6 +29,8 @@ export interface ReadinessResponse {
 export const permissionCodes = [
   'platform.manage',
   'audit.read',
+  'maintenance.read',
+  'maintenance.manage',
   'tenant.manage',
   'organization.manage',
   'organization.users.manage',
@@ -62,7 +64,7 @@ export type SystemRoleCode = (typeof systemRoleCodes)[number];
 
 export const systemRolePermissions = {
   platform_admin: permissionCodes,
-  platform_auditor: ['audit.read'],
+  platform_auditor: ['audit.read', 'maintenance.read'],
   organization_admin: ['organization.manage', 'organization.users.manage', 'space.create'],
   organization_member: [],
   space_manager: [

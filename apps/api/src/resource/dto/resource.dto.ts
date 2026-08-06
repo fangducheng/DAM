@@ -74,6 +74,12 @@ export class NodeVersionDto {
   lockVersion!: number;
 }
 
+export class PurgeNodeDto extends NodeVersionDto {
+  @IsString()
+  @Length(1, 255)
+  confirmationName!: string;
+}
+
 export class CreateUploadSessionDto {
   @IsOptional()
   @IsUUID()

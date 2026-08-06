@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
   ArchiveRestore,
+  AlertTriangle,
+  Clock3,
   Download,
   Eye,
   File as FileIcon,
@@ -85,13 +87,25 @@ interface ResourceNode {
   parentId: string | null;
   nodeType: 'FOLDER' | 'ASSET';
   name: string;
-  status: 'ACTIVE' | 'QUARANTINED' | 'DELETED';
+  status: 'ACTIVE' | 'QUARANTINED' | 'DELETED' | 'PURGING';
   deletedAt: string | null;
   lockVersion: number;
   createdAt: string;
   updatedAt: string;
   createdBy: { id: string; displayName: string };
   asset: AssetSummary | null;
+  deletionBatch: {
+    id: string;
+    rootNodeId: string;
+    status: 'RETAINED' | 'PURGE_REQUESTED' | 'PURGING' | 'FAILED';
+    deletedAt: string;
+    purgeAt: string;
+    purgeRequestedAt: string | null;
+    itemCount: number;
+    sourceBytes: string;
+    releasedBytes: string;
+    errorMessage: string | null;
+  } | null;
   _count: { children: number };
 }
 
@@ -131,6 +145,7 @@ const loading = ref(true);
 const showFolder = ref(false);
 const showRename = ref(false);
 const showDelete = ref(false);
+const showPurge = ref(false);
 const showVersions = ref(false);
 const showTags = ref(false);
 const submitting = ref(false);
@@ -143,6 +158,7 @@ const versionTarget = ref<AssetSummary | null>(null);
 const uploadTasks = reactive<UploadTask[]>([]);
 const folderName = ref('');
 const renameValue = ref('');
+const purgeConfirmation = ref('');
 const searchQuery = ref('');
 const selectedSearchTagId = ref('');
 const searchActive = ref(false);
@@ -560,6 +576,33 @@ async function restoreNode(node: ResourceNode): Promise<void> {
   }
 }
 
+function confirmPurge(node: ResourceNode): void {
+  selectedNode.value = node;
+  purgeConfirmation.value = '';
+  showPurge.value = true;
+}
+
+async function purgeNode(): Promise<void> {
+  if (selectedNode.value === null) return;
+  submitting.value = true;
+  try {
+    await apiRequest(`/api/v1/resource-nodes/${selectedNode.value.id}/purge`, {
+      method: 'POST',
+      body: JSON.stringify({
+        lockVersion: selectedNode.value.lockVersion,
+        confirmationName: purgeConfirmation.value,
+      }),
+    });
+    showPurge.value = false;
+    notify('success', '永久删除请求已提交');
+    await load();
+  } catch (error) {
+    notifyError(error, '永久删除请求失败');
+  } finally {
+    submitting.value = false;
+  }
+}
+
 function openPermissions(node: ResourceNode): void {
   void router.push({ path: '/permissions', query: { nodeId: node.id } });
 }
@@ -657,6 +700,28 @@ function formatTime(value: string | null): string {
     minute: '2-digit',
     hour12: false,
   }).format(new Date(value));
+}
+
+function remainingDays(node: ResourceNode): number {
+  if (node.deletionBatch === null) return 0;
+  return Math.max(
+    0,
+    Math.ceil((new Date(node.deletionBatch.purgeAt).getTime() - Date.now()) / 86_400_000),
+  );
+}
+
+function deletionStatus(node: ResourceNode): string {
+  switch (node.deletionBatch?.status) {
+    case 'RETAINED':
+      return '可恢复';
+    case 'PURGE_REQUESTED':
+    case 'PURGING':
+      return '等待永久删除';
+    case 'FAILED':
+      return '清理失败';
+    default:
+      return '状态未知';
+  }
 }
 
 onMounted(async () => {
@@ -917,7 +982,7 @@ onMounted(async () => {
     </div>
     <div v-else-if="recycleItems.length > 0" class="asset-table recycle-table">
       <div class="asset-row asset-row-header">
-        <span>名称</span><span>类型</span><span>删除时间</span><span>创建者</span><span></span>
+        <span>名称</span><span>类型</span><span>自动清理</span><span>容量与状态</span><span></span>
       </div>
       <div v-for="node in recycleItems" :key="node.id" class="asset-row">
         <div class="asset-name">
@@ -927,15 +992,48 @@ onMounted(async () => {
           </span>
           <span
             ><strong>{{ node.name }}</strong
-            ><small>批次删除</small></span
+            ><small
+              >{{ node.deletionBatch?.itemCount ?? 1 }} 个项目 ·
+              {{ formatTime(node.deletedAt) }}</small
+            ></span
           >
         </div>
         <span data-label="类型">{{ node.nodeType === 'FOLDER' ? '文件夹' : '文件' }}</span>
-        <span data-label="删除时间">{{ formatTime(node.deletedAt) }}</span>
-        <span data-label="创建者">{{ node.createdBy.displayName }}</span>
+        <span class="recycle-deadline" data-label="自动清理">
+          <strong v-if="node.deletionBatch?.status === 'RETAINED'"
+            ><Clock3 :size="14" />剩余 {{ remainingDays(node) }} 天</strong
+          >
+          <strong v-else>{{ deletionStatus(node) }}</strong>
+          <small>{{ formatTime(node.deletionBatch?.purgeAt ?? null) }}</small>
+        </span>
+        <span class="recycle-state" data-label="容量与状态">
+          <strong>{{ formatBytes(node.deletionBatch?.sourceBytes ?? 0) }}</strong>
+          <small
+            class="status-badge"
+            :class="{
+              active: node.deletionBatch?.status === 'RETAINED',
+              disabled: node.deletionBatch?.status === 'FAILED',
+            }"
+            >{{ deletionStatus(node) }}</small
+          >
+        </span>
         <span class="row-actions">
-          <button class="secondary-button compact" type="button" @click="restoreNode(node)">
+          <button
+            v-if="node.deletionBatch?.status === 'RETAINED'"
+            class="secondary-button compact"
+            type="button"
+            @click="restoreNode(node)"
+          >
             <RotateCcw :size="15" />恢复
+          </button>
+          <button
+            v-if="node.deletionBatch?.status === 'RETAINED'"
+            class="icon-button small danger"
+            type="button"
+            title="永久删除"
+            @click="confirmPurge(node)"
+          >
+            <Trash2 :size="15" />
           </button>
         </span>
       </div>
@@ -983,6 +1081,31 @@ onMounted(async () => {
       <button class="secondary-button" type="button" @click="showDelete = false">取消</button>
       <button class="danger-button" type="button" :disabled="submitting" @click="trashNode">
         移入回收站
+      </button>
+    </div>
+  </ModalDialog>
+
+  <ModalDialog v-if="showPurge" title="永久删除" @close="showPurge = false">
+    <div class="confirm-content destructive-confirmation">
+      <AlertTriangle :size="24" />
+      <div>
+        <strong>此操作不可撤销</strong>
+        <p>资源及全部历史版本将被永久删除，空间容量会在后台清理完成后释放。</p>
+      </div>
+    </div>
+    <label class="field">
+      <span>输入“{{ selectedNode?.name }}”确认</span>
+      <input v-model="purgeConfirmation" maxlength="255" autocomplete="off" />
+    </label>
+    <div class="modal-actions">
+      <button class="secondary-button" type="button" @click="showPurge = false">取消</button>
+      <button
+        class="danger-button"
+        type="button"
+        :disabled="submitting || purgeConfirmation !== selectedNode?.name"
+        @click="purgeNode"
+      >
+        <LoaderCircle v-if="submitting" class="spinning" :size="16" />永久删除
       </button>
     </div>
   </ModalDialog>

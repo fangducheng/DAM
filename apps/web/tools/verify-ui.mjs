@@ -123,6 +123,32 @@ try {
   await page.screenshot({ path: desktopSearch, fullPage: true });
   const desktopSearchOverflow = await hasPageOverflow(page);
 
+  const searchedAssetRow = page.getByRole('button', { name: uploadFixtureName }).locator('..');
+  await searchedAssetRow.getByTitle('移入回收站').click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '移入回收站', exact: true })
+    .click();
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  await page.getByRole('tab', { name: '回收站' }).click();
+  await waitForView(page);
+  await page.getByText(/剩余 30 天/).waitFor();
+  const desktopRecycleBin = join(outputDirectory, 'recycle-bin-desktop.png');
+  await page.screenshot({ path: desktopRecycleBin, fullPage: true });
+  const desktopRecycleBinOverflow = await hasPageOverflow(page);
+  const recycledRow = page.getByText(uploadFixtureName, { exact: true }).locator('..').locator('..');
+  await recycledRow.getByTitle('永久删除').click();
+  const purgeDialog = page.getByRole('dialog');
+  const purgeButton = purgeDialog.getByRole('button', { name: '永久删除', exact: true });
+  if (!(await purgeButton.isDisabled())) throw new Error('Permanent delete was enabled too early');
+  await purgeDialog.getByLabel(/输入/).fill(uploadFixtureName);
+  if (await purgeButton.isDisabled()) throw new Error('Permanent delete did not accept exact name');
+  const desktopPurgeConfirmation = join(outputDirectory, 'purge-confirmation-desktop.png');
+  await page.screenshot({ path: desktopPurgeConfirmation, fullPage: true });
+  await purgeDialog.getByTitle('关闭').click();
+  await recycledRow.getByRole('button', { name: '恢复', exact: true }).click();
+  await waitForView(page);
+
   await page.getByRole('link', { name: '通知', exact: true }).click();
   await page.waitForURL('**/notifications');
   await waitForView(page);
@@ -136,6 +162,13 @@ try {
   const desktopAudit = join(outputDirectory, 'audit-desktop.png');
   await page.screenshot({ path: desktopAudit, fullPage: true });
   const desktopAuditOverflow = await hasPageOverflow(page);
+
+  await page.getByRole('link', { name: '维护任务' }).click();
+  await page.waitForURL('**/maintenance');
+  await waitForView(page);
+  const desktopMaintenance = join(outputDirectory, 'maintenance-desktop.png');
+  await page.screenshot({ path: desktopMaintenance, fullPage: true });
+  const desktopMaintenanceOverflow = await hasPageOverflow(page);
 
   await page.getByRole('link', { name: '资产库' }).click();
   await page.waitForURL('**/assets');
@@ -161,6 +194,13 @@ try {
   await page.screenshot({ path: mobileAudit, fullPage: true });
   const mobileAuditOverflow = await hasPageOverflow(page);
 
+  await page.getByRole('link', { name: '维护任务' }).click();
+  await page.waitForURL('**/maintenance');
+  await waitForView(page);
+  const mobileMaintenance = join(outputDirectory, 'maintenance-mobile.png');
+  await page.screenshot({ path: mobileMaintenance, fullPage: true });
+  const mobileMaintenanceOverflow = await hasPageOverflow(page);
+
   await page.getByRole('link', { name: '目录权限' }).click();
   await page.waitForURL('**/permissions');
   const mobilePermissions = join(outputDirectory, 'permissions-mobile.png');
@@ -175,11 +215,15 @@ try {
       desktopAssets,
       desktopVersions,
       desktopSearch,
+      desktopRecycleBin,
+      desktopPurgeConfirmation,
       desktopNotifications,
       desktopAudit,
+      desktopMaintenance,
       mobileAssets,
       mobileNotifications,
       mobileAudit,
+      mobileMaintenance,
       mobilePermissions,
     },
     overflow: {
@@ -188,11 +232,14 @@ try {
       desktopSpaces: desktopSpacesOverflow,
       desktopAssets: desktopAssetsOverflow,
       desktopSearch: desktopSearchOverflow,
+      desktopRecycleBin: desktopRecycleBinOverflow,
       desktopNotifications: desktopNotificationsOverflow,
       desktopAudit: desktopAuditOverflow,
+      desktopMaintenance: desktopMaintenanceOverflow,
       mobileAssets: mobileAssetsOverflow,
       mobileNotifications: mobileNotificationsOverflow,
       mobileAudit: mobileAuditOverflow,
+      mobileMaintenance: mobileMaintenanceOverflow,
       mobilePermissions: mobilePermissionsOverflow,
     },
     consoleErrors,

@@ -6,6 +6,9 @@ import { validateEnvironment } from '@dam/config';
 
 import { ObjectStorageService } from './infrastructure/object-storage.service.js';
 import { PrismaService } from './infrastructure/prisma.service.js';
+import { MaintenanceProcessorService } from './maintenance/maintenance-processor.service.js';
+import { MaintenanceQueueService } from './maintenance/maintenance-queue.service.js';
+import { MaintenanceSchedulerService } from './maintenance/maintenance-scheduler.service.js';
 import { AssetProcessingService } from './processing/asset-processing.service.js';
 import { ClamAvService } from './processing/clamav.service.js';
 import { ContentExtractionService } from './processing/content-extraction.service.js';
@@ -36,6 +39,9 @@ import { WorkerRuntimeService } from './worker-runtime.service.js';
     ClamAvService,
     ContentExtractionService,
     AssetProcessingService,
+    MaintenanceQueueService,
+    MaintenanceProcessorService,
+    MaintenanceSchedulerService,
     WorkerRuntimeService,
   ],
 })

@@ -11,6 +11,7 @@ import {
   Server,
   ShieldCheck,
   UsersRound,
+  Wrench,
 } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
@@ -31,6 +32,7 @@ const navigation = [
   { to: '/permissions', label: '目录权限', icon: KeyRound },
   { to: '/notifications', label: '通知', icon: Bell },
   { to: '/audit', label: '审计日志', icon: ScrollText },
+  { to: '/maintenance', label: '维护任务', icon: Wrench },
   { to: '/sessions', label: '登录会话', icon: ShieldCheck },
 ];
 

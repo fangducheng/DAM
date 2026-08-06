@@ -1656,6 +1656,94 @@ h2 {
   overflow-x: auto;
 }
 
+.maintenance-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.maintenance-metrics article {
+  display: grid;
+  min-height: 76px;
+  align-content: center;
+  gap: 7px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.maintenance-metrics small,
+.maintenance-time small,
+.maintenance-job-name small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.maintenance-metrics strong {
+  font-size: 20px;
+}
+
+.maintenance-metrics .metric-time {
+  font-size: 12px;
+}
+
+.maintenance-toolbar {
+  grid-template-columns: 160px minmax(220px, 1fr) auto;
+  margin-top: 16px;
+}
+
+.maintenance-section {
+  margin-top: 0;
+  overflow-x: auto;
+}
+
+.maintenance-table .table-row {
+  grid-template-columns: minmax(210px, 1.2fr) 100px 90px 190px minmax(180px, 1fr) 82px;
+  min-width: 980px;
+}
+
+.maintenance-job-name,
+.maintenance-time {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.maintenance-job-name strong,
+.maintenance-job-name small,
+.maintenance-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maintenance-error {
+  color: #7a4545;
+  font-size: 11px;
+}
+
+.recycle-deadline,
+.recycle-state {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.recycle-deadline strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.recycle-deadline small,
+.recycle-state small:not(.status-badge) {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.destructive-confirmation {
+  color: var(--red);
+}
+
 .audit-details {
   margin-top: 5px;
   color: var(--muted);
@@ -1798,6 +1886,10 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .maintenance-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .master-detail {
     grid-template-columns: 1fr;
     min-height: 0;
@@ -1936,16 +2028,20 @@ h2 {
   }
 
   .notification-table .table-row,
-  .audit-table .table-row {
+  .audit-table .table-row,
+  .maintenance-table .table-row {
     grid-template-columns: 1fr;
+    min-width: 0;
   }
 
   .notification-table .table-header,
-  .audit-table .table-header {
+  .audit-table .table-header,
+  .maintenance-table .table-header {
     display: none;
   }
 
-  .audit-toolbar {
+  .audit-toolbar,
+  .maintenance-toolbar {
     grid-template-columns: 1fr;
   }
 

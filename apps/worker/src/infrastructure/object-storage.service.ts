@@ -24,4 +24,23 @@ export class ObjectStorageService {
   getObject(objectKey: string): Promise<Readable> {
     return this.client.getObject(this.bucket, objectKey);
   }
+
+  async abortMultipart(objectKey: string, uploadId: string): Promise<void> {
+    try {
+      await this.client.abortMultipartUpload(this.bucket, objectKey, uploadId);
+    } catch (error) {
+      if (this.errorCode(error) !== 'NoSuchUpload') throw error;
+    }
+  }
+
+  async removeObject(bucket: string, objectKey: string): Promise<void> {
+    if (bucket !== this.bucket) throw new Error('Storage deletion requested for an invalid bucket');
+    await this.client.removeObject(this.bucket, objectKey);
+  }
+
+  private errorCode(error: unknown): string | undefined {
+    return typeof error === 'object' && error !== null && 'code' in error
+      ? String(error.code)
+      : undefined;
+  }
 }

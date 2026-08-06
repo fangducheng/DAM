@@ -26,6 +26,7 @@ export class NotificationService {
           payload: true,
           status: true,
           readAt: true,
+          archivedAt: true,
           createdAt: true,
         },
       }),
@@ -45,7 +46,9 @@ export class NotificationService {
       where: { id: notificationId, userId: actor.userId },
       data: {
         status: input.status,
-        ...(input.status === 'READ' ? { readAt: new Date() } : {}),
+        ...(input.status === 'READ'
+          ? { readAt: new Date(), archivedAt: null }
+          : { archivedAt: new Date() }),
       },
     });
     if (updated.count !== 1) {
@@ -59,6 +62,7 @@ export class NotificationService {
         payload: true,
         status: true,
         readAt: true,
+        archivedAt: true,
         createdAt: true,
       },
     });
@@ -67,7 +71,7 @@ export class NotificationService {
   async readAll(actor: AuthenticatedUser) {
     const updated = await this.prisma.notification.updateMany({
       where: { userId: actor.userId, status: 'UNREAD' },
-      data: { status: 'READ', readAt: new Date() },
+      data: { status: 'READ', readAt: new Date(), archivedAt: null },
     });
     return { updated: updated.count };
   }

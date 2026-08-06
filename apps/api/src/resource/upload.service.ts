@@ -11,6 +11,7 @@ import type { AuthorizationRequestMetadata } from '../authorization/authorizatio
 import { ApiException } from '../common/errors/api.exception.js';
 import { ObjectStorageService } from '../infrastructure/object-storage.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
+import { scheduleUploadExpiration } from '../maintenance/maintenance-scheduling.js';
 import type { CreateUploadSessionDto, RecordUploadPartDto } from './dto/resource.dto.js';
 import { normalizeResourceName } from './resource-name.js';
 
@@ -115,6 +116,12 @@ export class UploadService {
                 sizeBytes: created.sizeBytes.toString(),
               },
             },
+          });
+          await scheduleUploadExpiration(database, {
+            sessionId: created.id,
+            tenantId: actor.tenantId,
+            spaceId,
+            expiresAt,
           });
           return created;
         },

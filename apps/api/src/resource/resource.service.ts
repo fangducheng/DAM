@@ -13,9 +13,15 @@ import type {
   CreateFolderDto,
   NodePageQueryDto,
   NodeVersionDto,
+  PurgeNodeDto,
   RecyclePageQueryDto,
   UpdateNodeDto,
 } from './dto/resource.dto.js';
+import {
+  cancelDeletionMaintenance,
+  recycleRetentionDays,
+  scheduleDeletionMaintenance,
+} from '../maintenance/maintenance-scheduling.js';
 import { normalizeResourceName } from './resource-name.js';
 
 const visibleStatuses: Array<'ACTIVE' | 'QUARANTINED'> = ['ACTIVE', 'QUARANTINED'];
@@ -29,6 +35,20 @@ const nodeSelection = Prisma.validator<Prisma.ResourceNodeSelect>()({
   status: true,
   deletedAt: true,
   deletionBatchId: true,
+  deletionBatch: {
+    select: {
+      id: true,
+      rootNodeId: true,
+      status: true,
+      deletedAt: true,
+      purgeAt: true,
+      purgeRequestedAt: true,
+      itemCount: true,
+      sourceBytes: true,
+      releasedBytes: true,
+      errorMessage: true,
+    },
+  },
   lockVersion: true,
   createdAt: true,
   updatedAt: true,
@@ -276,47 +296,105 @@ export class ResourceService {
     await this.authorization.assert(actor, 'node.delete', { type: 'NODE', id: nodeId }, metadata);
     const deletionBatchId = randomUUID();
     const deletedAt = new Date();
-    await this.prisma.$transaction(async (database) => {
-      const changed = await database.resourceNode.updateMany({
-        where: {
-          id: nodeId,
-          lockVersion: input.lockVersion,
-          status: { in: [...visibleStatuses] },
-        },
-        data: {
-          status: 'DELETED',
-          deletedAt,
-          deletionBatchId,
-          lockVersion: { increment: 1 },
-        },
-      });
-      if (changed.count !== 1) {
-        throw this.conflict('资源已被其他用户修改，请刷新后重试');
-      }
-      const descendants = await database.resourceClosure.findMany({
-        where: { ancestorId: nodeId, depth: { gt: 0 } },
-        select: { descendantId: true },
-      });
-      await database.resourceNode.updateMany({
-        where: {
-          id: { in: descendants.map(({ descendantId }) => descendantId) },
-          status: { in: [...visibleStatuses] },
-        },
-        data: { status: 'DELETED', deletedAt, deletionBatchId, lockVersion: { increment: 1 } },
-      });
-      await database.auditEvent.create({
-        data: {
-          tenantId: actor.tenantId,
-          actorUserId: actor.userId,
-          action: 'resource.trash',
-          resourceType: 'NODE',
-          resourceId: nodeId,
-          result: 'SUCCEEDED',
-          ...this.auditMetadata(metadata),
-          details: { deletionBatchId, name: node.name },
-        },
-      });
-    });
+    const purgeAt = new Date(deletedAt.getTime() + recycleRetentionDays * 24 * 60 * 60 * 1_000);
+    await this.prisma.$transaction(
+      async (database) => {
+        const closure = await database.resourceClosure.findMany({
+          where: { ancestorId: nodeId },
+          select: {
+            descendant: { select: { id: true, status: true, deletionBatchId: true } },
+          },
+        });
+        const subtree = closure.map(({ descendant }) => descendant);
+        if (subtree.some(({ status }) => status === 'PURGING')) {
+          throw this.conflict('子目录正在永久删除，请稍后刷新后重试');
+        }
+        const nestedBatchIds = [
+          ...new Set(
+            subtree
+              .map(({ deletionBatchId: batchId }) => batchId)
+              .filter((batchId): batchId is string => batchId !== null),
+          ),
+        ];
+        const nestedBatches = await database.deletionBatch.findMany({
+          where: { id: { in: nestedBatchIds } },
+          select: { id: true, status: true },
+        });
+        if (nestedBatches.some(({ status }) => !['RETAINED', 'FAILED'].includes(status))) {
+          throw this.conflict('子目录已进入永久删除流程，请稍后刷新后重试');
+        }
+        const subtreeIds = subtree.map(({ id }) => id);
+        const sourceBytes = await database.assetVersion.aggregate({
+          where: { asset: { nodeId: { in: subtreeIds } } },
+          _sum: { sizeBytes: true },
+        });
+        const batch = await database.deletionBatch.create({
+          data: {
+            id: deletionBatchId,
+            tenantId: actor.tenantId,
+            spaceId: node.spaceId,
+            rootNodeId: nodeId,
+            rootName: node.name,
+            rootType: node.nodeType,
+            deletedById: actor.userId,
+            deletedAt,
+            purgeAt,
+            itemCount: subtree.length,
+            sourceBytes: sourceBytes._sum.sizeBytes ?? 0n,
+          },
+        });
+        const changed = await database.resourceNode.updateMany({
+          where: {
+            id: nodeId,
+            lockVersion: input.lockVersion,
+            status: { in: [...visibleStatuses] },
+          },
+          data: {
+            status: 'DELETED',
+            deletedAt,
+            deletionBatchId,
+            lockVersion: { increment: 1 },
+          },
+        });
+        if (changed.count !== 1) {
+          throw this.conflict('资源已被其他用户修改，请刷新后重试');
+        }
+        await database.resourceNode.updateMany({
+          where: {
+            id: { in: subtreeIds.filter((id) => id !== nodeId) },
+            status: { in: ['ACTIVE', 'QUARANTINED', 'DELETED'] },
+          },
+          data: { status: 'DELETED', deletedAt, deletionBatchId, lockVersion: { increment: 1 } },
+        });
+        if (nestedBatchIds.length > 0) {
+          await database.deletionBatch.updateMany({
+            where: { id: { in: nestedBatchIds } },
+            data: { status: 'SUPERSEDED', errorMessage: null },
+          });
+          await cancelDeletionMaintenance(database, nestedBatchIds);
+        }
+        await scheduleDeletionMaintenance(database, batch);
+        await database.auditEvent.create({
+          data: {
+            tenantId: actor.tenantId,
+            actorUserId: actor.userId,
+            action: 'resource.trash',
+            resourceType: 'NODE',
+            resourceId: nodeId,
+            result: 'SUCCEEDED',
+            ...this.auditMetadata(metadata),
+            details: {
+              deletionBatchId,
+              name: node.name,
+              purgeAt: purgeAt.toISOString(),
+              itemCount: subtree.length,
+              sourceBytes: (sourceBytes._sum.sizeBytes ?? 0n).toString(),
+            },
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async recycleBin(actor: AuthenticatedUser, spaceId: string, query: RecyclePageQueryDto) {
@@ -326,8 +404,11 @@ export class ResourceService {
     const candidates = await this.prisma.resourceNode.findMany({
       where: {
         spaceId,
-        status: 'DELETED',
+        status: { in: ['DELETED', 'PURGING'] },
         deletionBatchId: { not: null },
+        deletionBatch: {
+          status: { in: ['RETAINED', 'PURGE_REQUESTED', 'PURGING', 'FAILED'] },
+        },
         isRoot: false,
       },
       orderBy: { id: 'asc' },
@@ -367,17 +448,33 @@ export class ResourceService {
         space: { tenantId: actor.tenantId },
         status: 'DELETED',
         deletionBatchId: { not: null },
+        deletionBatch: { status: 'RETAINED' },
         isRoot: false,
       },
       select: { ...this.nodeSelection(), parent: { select: { id: true, status: true } } },
     });
-    if (node === null || node.deletionBatchId === null || node.parent?.status !== 'ACTIVE') {
+    if (
+      node === null ||
+      node.deletionBatchId === null ||
+      node.deletionBatch === null ||
+      node.deletionBatch.rootNodeId !== nodeId ||
+      node.parent?.status !== 'ACTIVE'
+    ) {
       throw this.conflict('原目录不可用，暂时无法恢复该资源');
     }
     await this.authorization.assert(actor, 'node.delete', { type: 'NODE', id: nodeId }, metadata);
 
     try {
       const restored = await this.prisma.$transaction(async (database) => {
+        const locked = await database.$queryRaw<Array<{ status: string }>>(Prisma.sql`
+          SELECT "status"::text AS "status"
+          FROM "deletion_batches"
+          WHERE "id" = ${node.deletionBatchId!}::uuid
+          FOR UPDATE
+        `);
+        if (locked[0]?.status !== 'RETAINED') {
+          throw this.conflict('该资源已进入永久删除流程，无法恢复');
+        }
         const batch = await database.resourceNode.findMany({
           where: { deletionBatchId: node.deletionBatchId! },
           select: {
@@ -426,6 +523,11 @@ export class ResourceService {
             lockVersion: { increment: 1 },
           },
         });
+        await database.deletionBatch.update({
+          where: { id: node.deletionBatchId! },
+          data: { status: 'RESTORED', restoredAt: new Date(), errorMessage: null },
+        });
+        await cancelDeletionMaintenance(database, [node.deletionBatchId!]);
         await database.auditEvent.create({
           data: {
             tenantId: actor.tenantId,
@@ -435,7 +537,7 @@ export class ResourceService {
             resourceId: nodeId,
             result: 'SUCCEEDED',
             ...this.auditMetadata(metadata),
-            details: { name: node.name },
+            details: { name: node.name, deletionBatchId: node.deletionBatchId },
           },
         });
         return database.resourceNode.findUniqueOrThrow({
@@ -447,6 +549,127 @@ export class ResourceService {
     } catch (error) {
       this.rethrowConflict(error, '原目录中已存在同名资源，请先处理名称冲突');
     }
+  }
+
+  async requestPurge(
+    actor: AuthenticatedUser,
+    nodeId: string,
+    input: PurgeNodeDto,
+    metadata: AuthorizationRequestMetadata,
+  ) {
+    const node = await this.prisma.resourceNode.findFirst({
+      where: {
+        id: nodeId,
+        space: { tenantId: actor.tenantId },
+        status: { in: ['DELETED', 'PURGING'] },
+        deletionBatchId: { not: null },
+        isRoot: false,
+      },
+      select: this.nodeSelection(),
+    });
+    if (
+      node === null ||
+      node.deletionBatchId === null ||
+      node.deletionBatch === null ||
+      node.deletionBatch.rootNodeId !== nodeId
+    ) {
+      throw this.notFound();
+    }
+    const deletionBatch = node.deletionBatch;
+    await this.authorization.assert(actor, 'node.delete', { type: 'NODE', id: nodeId }, metadata);
+    if (input.confirmationName !== node.name) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'VALIDATION_FAILED',
+        '确认名称与资源名称不一致',
+        [
+          {
+            field: 'confirmationName',
+            code: 'MISMATCH',
+            message: '请输入完整且完全一致的资源名称',
+          },
+        ],
+      );
+    }
+    const requestedAt = new Date();
+    await this.prisma.$transaction(
+      async (database) => {
+        const locked = await database.$queryRaw<Array<{ status: string }>>(Prisma.sql`
+          SELECT "status"::text AS "status"
+          FROM "deletion_batches"
+          WHERE "id" = ${node.deletionBatchId!}::uuid
+          FOR UPDATE
+        `);
+        if (locked[0]?.status !== 'RETAINED') {
+          throw this.conflict('该资源已进入永久删除流程，请勿重复提交');
+        }
+        const changed = await database.resourceNode.updateMany({
+          where: {
+            id: nodeId,
+            deletionBatchId: node.deletionBatchId,
+            status: 'DELETED',
+            lockVersion: input.lockVersion,
+          },
+          data: { status: 'PURGING', lockVersion: { increment: 1 } },
+        });
+        if (changed.count !== 1) {
+          throw this.conflict('资源已被其他用户修改，请刷新后重试');
+        }
+        await database.resourceNode.updateMany({
+          where: {
+            deletionBatchId: node.deletionBatchId,
+            id: { not: nodeId },
+            status: 'DELETED',
+          },
+          data: { status: 'PURGING', lockVersion: { increment: 1 } },
+        });
+        await database.deletionBatch.update({
+          where: { id: node.deletionBatchId! },
+          data: { status: 'PURGE_REQUESTED', purgeRequestedAt: requestedAt, errorMessage: null },
+        });
+        await scheduleDeletionMaintenance(database, {
+          id: deletionBatch.id,
+          tenantId: actor.tenantId,
+          spaceId: node.spaceId,
+          purgeAt: deletionBatch.purgeAt,
+        });
+        await database.maintenanceJob.updateMany({
+          where: {
+            targetId: node.deletionBatchId,
+            jobType: 'RETENTION_WARNING',
+            status: 'PENDING',
+          },
+          data: { status: 'CANCELLED', completedAt: requestedAt },
+        });
+        await database.maintenanceJob.updateMany({
+          where: { targetId: node.deletionBatchId, jobType: 'PURGE_DELETION_BATCH' },
+          data: {
+            status: 'PENDING',
+            attempts: 0,
+            availableAt: requestedAt,
+            completedAt: null,
+            lockedAt: null,
+            lockedBy: null,
+            leaseExpiresAt: null,
+            errorMessage: null,
+          },
+        });
+        await database.auditEvent.create({
+          data: {
+            tenantId: actor.tenantId,
+            actorUserId: actor.userId,
+            action: 'resource.purge.requested',
+            resourceType: 'DELETION_BATCH',
+            resourceId: node.deletionBatchId,
+            result: 'SUCCEEDED',
+            ...this.auditMetadata(metadata),
+            details: { rootNodeId: nodeId, name: node.name },
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return { status: 'PURGE_REQUESTED' as const, purgeRequestedAt: requestedAt };
   }
 
   private async resolveParent(actor: AuthenticatedUser, spaceId: string, parentId?: string) {
@@ -555,10 +778,21 @@ export class ResourceService {
   }
 
   private serializeNode<
-    T extends { asset: null | { currentVersion: null | { sizeBytes: bigint } } },
+    T extends {
+      asset: null | { currentVersion: null | { sizeBytes: bigint } };
+      deletionBatch: null | { sourceBytes: bigint; releasedBytes: bigint };
+    },
   >(node: T) {
     return {
       ...node,
+      deletionBatch:
+        node.deletionBatch === null
+          ? null
+          : {
+              ...node.deletionBatch,
+              sourceBytes: node.deletionBatch.sourceBytes.toString(),
+              releasedBytes: node.deletionBatch.releasedBytes.toString(),
+            },
       asset:
         node.asset === null
           ? null

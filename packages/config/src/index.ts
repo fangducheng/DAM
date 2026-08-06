@@ -57,6 +57,25 @@ export const environmentSchema = z
     PROCESSING_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(30_000).default(2_000),
     PROCESSING_LEASE_SECONDS: z.coerce.number().int().min(30).max(1_800).default(120),
     PROCESSING_RETRY_BASE_SECONDS: z.coerce.number().int().min(1).max(300).default(5),
+    MAINTENANCE_WORKER_ENABLED: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .default(true),
+    MAINTENANCE_WORKER_ID: z.string().min(1).max(120).default('dam-maintenance-local'),
+    MAINTENANCE_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(30_000).default(2_000),
+    MAINTENANCE_LEASE_SECONDS: z.coerce.number().int().min(30).max(1_800).default(120),
+    MAINTENANCE_RETRY_BASE_SECONDS: z.coerce.number().int().min(1).max(300).default(5),
+    MAINTENANCE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(8),
+    MAINTENANCE_SCHEDULER_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(86_400_000)
+      .default(60_000),
+    RECYCLE_RETENTION_DAYS: z.coerce.number().int().min(30).max(30).default(30),
+    NOTIFICATION_READ_RETENTION_DAYS: z.coerce.number().int().min(30).max(3_650).default(180),
+    NOTIFICATION_ARCHIVED_RETENTION_DAYS: z.coerce.number().int().min(1).max(3_650).default(90),
+    COMPLETED_JOB_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     CLAMAV_ENABLED: z
       .enum(['true', 'false'])
       .transform((value) => value === 'true')
@@ -128,6 +147,14 @@ export const environmentSchema = z
         code: 'custom',
         path: ['CLAMAV_ENABLED'],
         message: 'CLAMAV_ENABLED must be true for a production processing worker',
+      });
+    }
+
+    if (!environment.MAINTENANCE_WORKER_ENABLED) {
+      context.addIssue({
+        code: 'custom',
+        path: ['MAINTENANCE_WORKER_ENABLED'],
+        message: 'MAINTENANCE_WORKER_ENABLED must be true in production',
       });
     }
   });

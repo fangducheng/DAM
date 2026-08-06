@@ -13,6 +13,8 @@ const prisma = new PrismaClient();
 const permissionNames: Record<PermissionCode, string> = {
   'platform.manage': 'Manage platform',
   'audit.read': 'Read audit events',
+  'maintenance.read': 'Read maintenance status',
+  'maintenance.manage': 'Manage maintenance jobs',
   'tenant.manage': 'Manage tenant',
   'organization.manage': 'Manage organization',
   'organization.users.manage': 'Manage organization users',

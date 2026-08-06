@@ -108,6 +108,26 @@ enum JobStatus {
   SUCCEEDED
   FAILED
   DEAD
+  CANCELLED
+}
+
+enum DeletionBatchStatus {
+  RETAINED
+  PURGE_REQUESTED
+  PURGING
+  PURGED
+  FAILED
+  RESTORED
+  SUPERSEDED
+}
+
+enum MaintenanceJobType {
+  EXPIRE_UPLOAD_SESSION
+  RETENTION_WARNING
+  PURGE_DELETION_BATCH
+  DELETE_STORAGE_OBJECT
+  PRUNE_NOTIFICATIONS
+  PRUNE_COMPLETED_JOBS
 }
 
 enum OutboxStatus {
@@ -131,16 +151,18 @@ model Tenant {
   createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  securityPolicy TenantSecurityPolicy?
-  organizations  Organization[]
-  users          User[]
-  groups         Group[]
-  roles          Role[]
-  spaces         Space[]
-  invitations    Invitation[]
-  roleBindings   RoleBinding[]
-  aclEntries     ResourceAclEntry[]
-  auditEvents    AuditEvent[]
+  securityPolicy  TenantSecurityPolicy?
+  organizations   Organization[]
+  users           User[]
+  groups          Group[]
+  roles           Role[]
+  spaces          Space[]
+  invitations     Invitation[]
+  roleBindings    RoleBinding[]
+  aclEntries      ResourceAclEntry[]
+  auditEvents     AuditEvent[]
+  deletionBatches DeletionBatch[]
+  maintenanceJobs MaintenanceJob[]
 
   @@map("tenants")
 }
@@ -216,6 +238,7 @@ model User {
   createdAclEntries   ResourceAclEntry[]       @relation("AclCreatedBy")
   auditEvents         AuditEvent[]             @relation("AuditActor")
   notifications       Notification[]
+  deletionBatches     DeletionBatch[]          @relation("DeletionBatchDeletedBy")
 
   @@unique([tenantId, loginName])
   @@unique([tenantId, email])
@@ -450,13 +473,15 @@ model Space {
   createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  ownerOrganization Organization?   @relation("SpaceOwnerOrganization", fields: [ownerOrganizationId], references: [id], onDelete: Restrict)
-  createdBy         User            @relation("SpaceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ownerOrganization Organization?    @relation("SpaceOwnerOrganization", fields: [ownerOrganizationId], references: [id], onDelete: Restrict)
+  createdBy         User             @relation("SpaceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   members           SpaceMember[]
   nodes             ResourceNode[]
   tags              Tag[]
   uploadSessions    UploadSession[]
+  deletionBatches   DeletionBatch[]
+  maintenanceJobs   MaintenanceJob[]
 
   @@unique([tenantId, code])
   @@index([tenantId, status])
@@ -504,6 +529,7 @@ model ResourceNode {
   asset               Asset?
   aclEntries          ResourceAclEntry[]
   uploadTargets       UploadSession[]    @relation("UploadTarget")
+  deletionBatch       DeletionBatch?     @relation(fields: [deletionBatchId], references: [id], onDelete: Restrict)
 
   @@index([spaceId, parentId, status])
   @@index([spaceId, isRoot])
@@ -523,6 +549,38 @@ model ResourceClosure {
   @@id([ancestorId, descendantId])
   @@index([descendantId, depth])
   @@map("resource_closure")
+}
+
+model DeletionBatch {
+  id               String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId         String              @map("tenant_id") @db.Uuid
+  spaceId          String              @map("space_id") @db.Uuid
+  rootNodeId       String              @map("root_node_id") @db.Uuid
+  rootName         String              @map("root_name") @db.VarChar(255)
+  rootType         NodeType            @map("root_type")
+  deletedById      String?             @map("deleted_by_id") @db.Uuid
+  deletedAt        DateTime            @map("deleted_at") @db.Timestamptz(3)
+  purgeAt          DateTime            @map("purge_at") @db.Timestamptz(3)
+  purgeRequestedAt DateTime?           @map("purge_requested_at") @db.Timestamptz(3)
+  purgedAt         DateTime?           @map("purged_at") @db.Timestamptz(3)
+  restoredAt       DateTime?           @map("restored_at") @db.Timestamptz(3)
+  itemCount        Int                 @map("item_count")
+  sourceBytes      BigInt              @default(0) @map("source_bytes")
+  releasedBytes    BigInt              @default(0) @map("released_bytes")
+  status           DeletionBatchStatus @default(RETAINED)
+  errorMessage     String?             @map("error_message") @db.VarChar(2000)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  space     Space          @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  deletedBy User?          @relation("DeletionBatchDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  nodes     ResourceNode[]
+
+  @@index([tenantId, status, purgeAt])
+  @@index([spaceId, status, deletedAt])
+  @@index([rootNodeId])
+  @@map("deletion_batches")
 }
 
 model Asset {
@@ -676,8 +734,8 @@ model UploadSession {
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   space       Space         @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  targetNode  ResourceNode? @relation("UploadTarget", fields: [targetNodeId], references: [id], onDelete: Restrict)
-  asset       Asset?        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  targetNode  ResourceNode? @relation("UploadTarget", fields: [targetNodeId], references: [id], onDelete: SetNull)
+  asset       Asset?        @relation(fields: [assetId], references: [id], onDelete: SetNull)
   initiatedBy User          @relation("UploadInitiatedBy", fields: [initiatedById], references: [id], onDelete: Restrict)
   parts       UploadPart[]
 
@@ -721,6 +779,36 @@ model ProcessingJob {
   @@index([status, availableAt])
   @@index([status, leaseExpiresAt])
   @@map("processing_jobs")
+}
+
+model MaintenanceJob {
+  id             String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenantId       String?            @map("tenant_id") @db.Uuid
+  spaceId        String?            @map("space_id") @db.Uuid
+  jobType        MaintenanceJobType @map("job_type")
+  idempotencyKey String             @unique @map("idempotency_key") @db.VarChar(200)
+  targetId       String?            @map("target_id") @db.Uuid
+  payload        Json               @default("{}")
+  status         JobStatus          @default(PENDING)
+  attempts       Int                @default(0)
+  maxAttempts    Int                @default(8) @map("max_attempts")
+  availableAt    DateTime           @default(now()) @map("available_at") @db.Timestamptz(3)
+  lockedAt       DateTime?          @map("locked_at") @db.Timestamptz(3)
+  lockedBy       String?            @map("locked_by") @db.VarChar(120)
+  leaseExpiresAt DateTime?          @map("lease_expires_at") @db.Timestamptz(3)
+  completedAt    DateTime?          @map("completed_at") @db.Timestamptz(3)
+  errorMessage   String?            @map("error_message") @db.VarChar(2000)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  space  Space?  @relation(fields: [spaceId], references: [id], onDelete: SetNull)
+
+  @@index([status, availableAt])
+  @@index([status, leaseExpiresAt])
+  @@index([tenantId, status, updatedAt])
+  @@index([spaceId, status])
+  @@map("maintenance_jobs")
 }
 
 model ContentExtraction {
@@ -779,13 +867,14 @@ model AuditEvent {
 }
 
 model Notification {
-  id        String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  userId    String             @map("user_id") @db.Uuid
-  type      String             @db.VarChar(100)
-  payload   Json
-  status    NotificationStatus @default(UNREAD)
-  readAt    DateTime?          @map("read_at") @db.Timestamptz(3)
-  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  id         String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId     String             @map("user_id") @db.Uuid
+  type       String             @db.VarChar(100)
+  payload    Json
+  status     NotificationStatus @default(UNREAD)
+  readAt     DateTime?          @map("read_at") @db.Timestamptz(3)
+  archivedAt DateTime?          @map("archived_at") @db.Timestamptz(3)
+  createdAt  DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

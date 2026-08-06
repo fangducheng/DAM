@@ -11,7 +11,7 @@
   "scripts": {
     "build": "turbo run build",
     "build:packages": "pnpm --filter @dam/config build && pnpm --filter @dam/contracts build && pnpm --filter @dam/database build",
-    "dev": "pnpm build:packages && concurrently -n api,web -c blue,green \"pnpm --filter @dam/api dev\" \"pnpm --filter @dam/web dev\"",
+    "dev": "pnpm build:packages && concurrently -n api,web,worker -c blue,green,magenta \"pnpm --filter @dam/api dev\" \"pnpm --filter @dam/web dev\" \"pnpm --filter @dam/worker dev\"",
     "dev:worker": "pnpm build:packages && pnpm --filter @dam/worker dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

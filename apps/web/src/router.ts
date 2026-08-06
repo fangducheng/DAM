@@ -38,6 +38,7 @@ export const router = createRouter({
         { path: 'permissions', component: () => import('./views/PermissionsView.vue') },
         { path: 'notifications', component: () => import('./views/NotificationsView.vue') },
         { path: 'audit', component: () => import('./views/AuditView.vue') },
+        { path: 'maintenance', component: () => import('./views/MaintenanceView.vue') },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/status' },

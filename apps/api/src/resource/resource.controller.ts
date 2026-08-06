@@ -25,6 +25,7 @@ import {
   CreateFolderDto,
   NodePageQueryDto,
   NodeVersionDto,
+  PurgeNodeDto,
   RecyclePageQueryDto,
   UpdateNodeDto,
 } from './dto/resource.dto.js';
@@ -106,5 +107,16 @@ export class ResourceController {
     @Req() request: FastifyRequest,
   ) {
     return this.resources.restore(actor, nodeId, input, requestMetadata(request));
+  }
+
+  @Post('resource-nodes/:nodeId/purge')
+  @ApiOperation({ summary: 'Request irreversible deletion of one retained batch' })
+  purge(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @Body() input: PurgeNodeDto,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.resources.requestPurge(actor, nodeId, input, requestMetadata(request));
   }
 }

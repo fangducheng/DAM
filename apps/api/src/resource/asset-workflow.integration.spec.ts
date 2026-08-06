@@ -176,6 +176,16 @@ integration('resource hierarchy and resumable asset workflow', () => {
     const recycle = await resources.recycleBin(actor, space.id, { limit: 50 });
     const deleted = recycle.items.find((item) => item.id === firstAsset.nodeId);
     expect(deleted?.status).toBe('DELETED');
+    expect(deleted?.deletionBatch).toMatchObject({
+      status: 'RETAINED',
+      itemCount: 1,
+      sourceBytes: String(firstPayload.length + secondPayload.length),
+    });
+    expect(
+      await prisma.maintenanceJob.count({
+        where: { targetId: deleted!.deletionBatchId, status: 'PENDING' },
+      }),
+    ).toBe(3);
     const restored = await resources.restore(
       actor,
       firstAsset.nodeId,
@@ -183,6 +193,41 @@ integration('resource hierarchy and resumable asset workflow', () => {
       metadata,
     );
     expect(restored.status).toBe('ACTIVE');
+    expect(
+      await prisma.maintenanceJob.count({
+        where: { targetId: deleted!.deletionBatchId, status: 'CANCELLED' },
+      }),
+    ).toBe(3);
+
+    await resources.trash(
+      actor,
+      firstAsset.nodeId,
+      { lockVersion: restored.lockVersion },
+      metadata,
+    );
+    const secondRecycle = await resources.recycleBin(actor, space.id, { limit: 50 });
+    const retained = secondRecycle.items.find((item) => item.id === firstAsset.nodeId)!;
+    await expect(
+      resources.requestPurge(
+        actor,
+        firstAsset.nodeId,
+        { lockVersion: retained.lockVersion, confirmationName: 'wrong name' },
+        metadata,
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    const requested = await resources.requestPurge(
+      actor,
+      firstAsset.nodeId,
+      { lockVersion: retained.lockVersion, confirmationName: retained.name },
+      metadata,
+    );
+    expect(requested.status).toBe('PURGE_REQUESTED');
+    expect(
+      await prisma.deletionBatch.findUniqueOrThrow({
+        where: { id: retained.deletionBatchId! },
+        select: { status: true },
+      }),
+    ).toEqual({ status: 'PURGE_REQUESTED' });
   }, 60_000);
 });
 
