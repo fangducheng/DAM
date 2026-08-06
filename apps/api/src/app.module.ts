@@ -9,6 +9,7 @@ import { AuthorizationModule } from './authorization/authorization.module.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/identity.module.js';
 import { InfrastructureModule } from './infrastructure/infrastructure.module.js';
+import { TenantModule } from './tenant/tenant.module.js';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { InfrastructureModule } from './infrastructure/infrastructure.module.js'
     HealthModule,
     IdentityModule,
     AuthorizationModule,
+    TenantModule,
   ],
   controllers: [AppController],
 })

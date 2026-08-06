@@ -3,6 +3,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import type { AuthenticatedUser } from '@dam/contracts';
 import type { Prisma } from '@dam/database';
 
+import { AuthorizationService } from '../authorization/authorization.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
 import type { IdentityRequestMetadata } from './identity.types.js';
@@ -45,6 +46,7 @@ export class InvitationService {
     private readonly passwords: PasswordService,
     private readonly crypto: SecurityCryptoService,
     private readonly totp: TotpService,
+    private readonly authorization: AuthorizationService,
   ) {}
 
   async create(
@@ -67,7 +69,7 @@ export class InvitationService {
       throw this.invalidInvitation('租户管理员邀请不能指定公司');
     }
 
-    await this.assertCanManageInvitations(actor, input.type, organization?.id);
+    await this.assertCanManageInvitations(actor, input.type, organization?.id, metadata);
     const initialRole = await this.prisma.role.findFirst({
       where: { code: input.initialRoleCode, isSystem: true },
       select: { id: true, code: true },
@@ -148,6 +150,7 @@ export class InvitationService {
       actor,
       invitation.type,
       invitation.organizationId ?? undefined,
+      metadata,
     );
     if (invitation.acceptedAt !== null || invitation.revokedAt !== null) {
       return;
@@ -362,6 +365,7 @@ export class InvitationService {
       ],
       skipDuplicates: true,
     });
+    await this.authorization.bumpVersion(database, invitation.tenantId);
     await database.user.update({ where: { id: userId }, data: { status: 'ACTIVE' } });
     const accepted = await database.invitation.updateMany({
       where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
@@ -412,29 +416,26 @@ export class InvitationService {
     actor: AuthenticatedUser,
     type: InvitationType,
     organizationId?: string,
+    metadata: IdentityRequestMetadata = {},
   ): Promise<void> {
-    const permissionCodes =
-      type === 'TENANT_ADMIN'
-        ? ['platform.manage', 'tenant.manage']
-        : ['platform.manage', 'organization.users.manage'];
-    const binding = await this.prisma.roleBinding.findFirst({
-      where: {
-        principalType: 'USER',
-        principalId: actor.userId,
-        role: { permissions: { some: { permission: { code: { in: permissionCodes } } } } },
-        OR: [
-          { scopeType: 'PLATFORM' },
-          { scopeType: 'TENANT', scopeId: actor.tenantId },
-          ...(organizationId === undefined
-            ? []
-            : [{ scopeType: 'ORGANIZATION' as const, scopeId: organizationId }]),
-        ],
-      },
-      select: { id: true },
-    });
-    if (binding === null) {
-      throw new ApiException(HttpStatus.FORBIDDEN, 'ACCESS_DENIED', '无权管理该范围的邀请');
+    if (type === 'TENANT_ADMIN') {
+      await this.authorization.assert(
+        actor,
+        'tenant.manage',
+        { type: 'TENANT', id: actor.tenantId },
+        metadata,
+      );
+      return;
     }
+    if (organizationId === undefined) {
+      throw this.invalidInvitation('公司成员邀请必须指定公司');
+    }
+    await this.authorization.assert(
+      actor,
+      'organization.users.manage',
+      { type: 'ORGANIZATION', id: organizationId },
+      metadata,
+    );
   }
 
   private roleAllowed(type: InvitationType, roleCode: string): boolean {

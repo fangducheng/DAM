@@ -10,7 +10,10 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { validateEnvironment } from '@dam/config';
 
+import { AuthorizationPolicy } from '../authorization/authorization.policy.js';
+import { AuthorizationService } from '../authorization/authorization.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
+import type { RedisService } from '../infrastructure/redis.service.js';
 import { IdentityService } from './identity.service.js';
 import { InvitationService } from './invitation.service.js';
 import { IdentityTokenService } from './security/identity-token.service.js';
@@ -38,7 +41,18 @@ integration('identity lifecycle integration', () => {
   const tokenService = new IdentityTokenService(new JwtService(), config);
   const sessions = new SessionService(prisma, crypto, tokenService, config);
   const identity = new IdentityService(prisma, passwords, crypto, totp, tokenService, sessions);
-  const invitations = new InvitationService(prisma, passwords, crypto, totp);
+  const authorizationCache = new Map<string, unknown>();
+  const redis = {
+    getJson<T>(key: string): Promise<T | null> {
+      return Promise.resolve((authorizationCache.get(key) as T | undefined) ?? null);
+    },
+    setJson(key: string, value: unknown): Promise<void> {
+      authorizationCache.set(key, value);
+      return Promise.resolve();
+    },
+  } as unknown as RedisService;
+  const authorization = new AuthorizationService(prisma, redis, new AuthorizationPolicy(), config);
+  const invitations = new InvitationService(prisma, passwords, crypto, totp, authorization);
 
   let tenantId: string;
   let organizationId: string;

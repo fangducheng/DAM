@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 
+import { AuthorizationModule } from '../authorization/authorization.module.js';
 import { AccessTokenGuard } from './auth/access-token.guard.js';
 import { MfaGuard } from './auth/mfa.guard.js';
 import { IdentityController } from './identity.controller.js';
@@ -16,6 +17,7 @@ import { SessionService } from './session.service.js';
 
 @Module({
   imports: [
+    AuthorizationModule,
     JwtModule.register({}),
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
