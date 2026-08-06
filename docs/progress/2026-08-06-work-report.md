@@ -1,84 +1,23 @@
-# Work Report - 2026-08-06
+# DAM 项目工作总结 - 2026-08-06
 
-## Status
+## 今日完成
 
-Lifecycle maintenance implementation is substantially complete but remains in progress. Work was
-stopped after a Windows blue screen so the current source can be preserved without running further
-high-memory or high-I/O verification.
+- 完成生命周期维护模块的数据库设计与迁移：新增删除批次、维护任务、通知归档时间、上传会话清理关系及相关索引。
+- 完成回收站 30 天保留机制，支持到期自动永久删除，并在剩余 7 天和 1 天时生成提醒。
+- 完成用户主动永久删除功能：校验删除权限，通过文件或文件夹名称二次确认，并记录审计日志。
+- 完成回收站恢复逻辑：恢复文件时同步取消对应的提醒和自动清理任务。
+- 完成维护任务队列和 Worker 处理器，覆盖过期上传会话、删除批次、MinIO 对象、通知和已完成任务的清理。
+- 完成永久删除的数据一致性处理，包括空间容量释放、对象引用计数维护、零引用对象清理任务和幂等重试。
+- 完成维护管理接口，支持查看维护概况、筛选任务和重试失败任务，并增加 `maintenance.read`、`maintenance.manage` 权限。
+- 完成维护管理页面，以及回收站剩余天数、容量、状态和永久删除名称确认交互。
+- 完成生命周期配置项、共享类型、权限种子和本地数据库角色绑定。
+- 完成 API 回收站集成测试、维护任务单元测试，以及 PostgreSQL、MinIO 永久清理集成测试。
+- 完成当前代码的 TypeScript 类型检查和单元测试。
 
-## Completed Work
+## 未完成事项
 
-- Added the `deletion_batches` and `maintenance_jobs` persistence models, notification archive
-  timestamps, purge-safe upload-session relations, lifecycle indexes, and migration
-  `20260806190000_lifecycle_maintenance`.
-- Added validated configuration for recycle retention, maintenance scheduling, leases, retries,
-  warning intervals, and completed-record retention.
-- Added 30-day recycle-bin retention, 7-day and 1-day warnings, exact-name immediate permanent
-  deletion, restore-time cancellation, quota/status data, and structured lifecycle errors.
-- Added durable maintenance scheduling and worker handlers for expired uploads, deletion batches,
-  MinIO object cleanup, notification retention, and completed-job pruning.
-- Added tenant-scoped maintenance summary, filtered job listing, and failed-job retry APIs with
-  `maintenance.read` and `maintenance.manage` permissions.
-- Added the maintenance administration view plus recycle-bin countdown, capacity, state, and
-  permanent-deletion confirmation interactions in the Vue console.
-- Added unit and PostgreSQL/MinIO integration coverage for maintenance job transitions and
-  lifecycle cleanup behavior.
-
-## Verification Completed Before The Incident
-
-- Applied the lifecycle migration locally with non-destructive migration deployment.
-- Seeded and confirmed the maintenance permissions and their role bindings in the local database.
-- Passed the API recycle-bin integration coverage.
-- Passed PostgreSQL and MinIO lifecycle-cleanup integration coverage.
-- Passed the most recent complete TypeScript type check and unit-test run performed before the
-  blue screen.
-
-These results were not rerun during closeout because Docker, development servers, browser
-verification, and parallel toolchains were intentionally left stopped.
-
-## Incident Findings
-
-- Windows recorded bug check `0x1A MEMORY_MANAGEMENT` with subcode `0x3F`, which means a page-file
-  in-page operation failed CRC validation.
-- Windows recorded `volmgr` event 161 because the crash dump could not be created. No memory dump
-  is available for driver-level analysis.
-- No resource-exhaustion event was recorded after 16:00, so the evidence does not support ordinary
-  Node.js heap exhaustion as the root cause.
-- The DAM log shows the API TypeScript watcher exiting with Windows status `0xC0000005` shortly
-  before the system restart. This is an access violation, not a JavaScript out-of-memory error.
-- Higher development load may have increased paging and exposed the fault, but project memory
-  optimization cannot repair an underlying page-file or storage-path error.
-
-## Known Issues And Unfinished Work
-
-- The maintenance Worker currently fails during local development startup because
-  `apps/worker/src/main.ts` cannot resolve the Nest logger provider. Fix and retest Worker startup.
-- The modified Playwright verification flow has not been run for the lifecycle administration and
-  permanent-deletion UI.
-- Root `pnpm verify` has not been rerun after all lifecycle changes.
-- The current root `pnpm dev` starts API and Worker TypeScript watchers, Node watchers, and Vite at
-  the same time. Replace this with the proposed low-memory, serial local-development profile before
-  resuming normal work on the 8 GB workstation.
-- Do not use `prisma migrate dev`: the historical
-  `20260806133000_processing_discovery` migration checksum has drifted and Prisma would request a
-  destructive reset. Continue using `migrate deploy` until the migration history is reconciled.
-- The lifecycle implementation and this report are being saved locally only; GitHub synchronization
-  is intentionally deferred.
-
-## Next Session
-
-1. Back up the latest local repository state before running disk-intensive verification.
-2. Fix the Worker logger bootstrap and verify a single compiled Worker process starts correctly.
-3. Implement the low-memory development profile: serial builds/tests, opt-in watchers, bounded Node
-   heaps, and no overlap between development servers and browser verification.
-4. Run focused checks sequentially, observe available memory, and stop if the system begins paging
-   heavily.
-5. Run lifecycle browser verification and the full quality gate only after the workstation is
-   stable.
-
-## Repository
-
-- Working tree: `C:\Users\leaderrun-20001\DAM-workspace`
-- Branch: `main`
-- Local repository remote: `D:\GitWarehouse`
-- GitHub remote: `https://github.com/fangducheng/DAM.git`
+1. 修复维护 Worker 启动时无法解析 Nest Logger 提供者的问题，并重新验证 Worker 单进程启动和任务轮询。
+2. 执行生命周期维护页面的桌面端、移动端浏览器验收，覆盖回收站倒计时、永久删除确认、维护任务筛选和失败任务重试。
+3. 执行生命周期功能最终完整验证，包括 Prisma 校验、类型检查、单元测试、集成测试和生产构建。
+4. 核对并处理历史迁移 `20260806133000_processing_discovery` 的校验和差异；在处理完成前继续使用非破坏性的 `migrate deploy`，不得重置本地数据库。
+5. 完成上述验证后，将生命周期维护实施计划状态更新为已完成。
