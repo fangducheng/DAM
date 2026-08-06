@@ -57,7 +57,7 @@ verification, and parallel toolchains were intentionally left stopped.
   permanent-deletion UI.
 - Root `pnpm verify` has not been rerun after all lifecycle changes.
 - The current root `pnpm dev` starts API and Worker TypeScript watchers, Node watchers, and Vite at
-  the same time. Replace this with the approved low-memory, serial local-development profile before
+  the same time. Replace this with the proposed low-memory, serial local-development profile before
   resuming normal work on the 8 GB workstation.
 - Do not use `prisma migrate dev`: the historical
   `20260806133000_processing_discovery` migration checksum has drifted and Prisma would request a
