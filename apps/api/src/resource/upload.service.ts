@@ -391,6 +391,14 @@ export class UploadService {
             createdById: actor.userId,
           },
         });
+        if (this.processingMode === 'deferred') {
+          await database.processingJob.create({
+            data: {
+              assetVersionId: version.id,
+              jobType: 'MALWARE_SCAN',
+            },
+          });
+        }
         await database.asset.update({
           where: { id: assetId },
           data: {

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import {
+  Bell,
   Box,
   Building2,
   FolderKanban,
   Files,
   KeyRound,
   LogOut,
+  ScrollText,
   Server,
   ShieldCheck,
   UsersRound,
@@ -27,6 +29,8 @@ const navigation = [
   { to: '/spaces', label: '业务空间', icon: FolderKanban },
   { to: '/assets', label: '资产库', icon: Files },
   { to: '/permissions', label: '目录权限', icon: KeyRound },
+  { to: '/notifications', label: '通知', icon: Bell },
+  { to: '/audit', label: '审计日志', icon: ScrollText },
   { to: '/sessions', label: '登录会话', icon: ShieldCheck },
 ];
 

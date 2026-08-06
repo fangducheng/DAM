@@ -38,6 +38,31 @@ export class AssetService {
         mimeType: true,
         createdAt: true,
         createdBy: { select: { id: true, displayName: true } },
+        extraction: { select: { parserVersion: true, extractedAt: true } },
+        renditions: {
+          orderBy: [{ type: 'asc' as const }, { variant: 'asc' as const }],
+          select: {
+            id: true,
+            type: true,
+            variant: true,
+            width: true,
+            height: true,
+            durationMs: true,
+            status: true,
+          },
+        },
+        processingJobs: {
+          orderBy: { createdAt: 'asc' as const },
+          select: {
+            id: true,
+            jobType: true,
+            status: true,
+            attempts: true,
+            maxAttempts: true,
+            errorMessage: true,
+            updatedAt: true,
+          },
+        },
       },
     });
     return {
@@ -99,11 +124,18 @@ export class AssetService {
     return { currentVersionId: version.id, versionNumber: version.versionNumber };
   }
 
-  async nodeUrl(actor: AuthenticatedUser, nodeId: string, mode: 'preview' | 'download') {
-    await this.authorization.assert(actor, mode === 'preview' ? 'node.preview' : 'node.download', {
-      type: 'NODE',
-      id: nodeId,
-    });
+  async nodeUrl(
+    actor: AuthenticatedUser,
+    nodeId: string,
+    mode: 'preview' | 'download',
+    metadata: AuthorizationRequestMetadata = {},
+  ) {
+    await this.authorization.assert(
+      actor,
+      mode === 'preview' ? 'node.preview' : 'node.download',
+      { type: 'NODE', id: nodeId },
+      metadata,
+    );
     const asset = await this.prisma.asset.findFirst({
       where: {
         nodeId,
@@ -125,10 +157,16 @@ export class AssetService {
     if (asset?.currentVersion === null || asset === null) {
       throw this.notFound();
     }
-    return this.issueUrl(asset.currentVersion, asset.originalFileName, mode);
+    const issued = await this.issueUrl(asset.currentVersion, asset.originalFileName, mode);
+    await this.auditRead(actor, nodeId, asset.currentVersion.id, mode, issued.expiresAt, metadata);
+    return issued;
   }
 
-  async versionDownload(actor: AuthenticatedUser, versionId: string) {
+  async versionDownload(
+    actor: AuthenticatedUser,
+    versionId: string,
+    metadata: AuthorizationRequestMetadata,
+  ) {
     const version = await this.prisma.assetVersion.findFirst({
       where: { id: versionId, asset: { node: { space: { tenantId: actor.tenantId } } } },
       select: {
@@ -143,11 +181,22 @@ export class AssetService {
     if (version === null) {
       throw this.notFound();
     }
-    await this.authorization.assert(actor, 'node.download', {
-      type: 'NODE',
-      id: version.asset.nodeId,
-    });
-    return this.issueUrl(version, version.asset.originalFileName, 'download');
+    await this.authorization.assert(
+      actor,
+      'node.download',
+      { type: 'NODE', id: version.asset.nodeId },
+      metadata,
+    );
+    const issued = await this.issueUrl(version, version.asset.originalFileName, 'download');
+    await this.auditRead(
+      actor,
+      version.asset.nodeId,
+      version.id,
+      'version-download',
+      issued.expiresAt,
+      metadata,
+    );
+    return issued;
   }
 
   private async issueUrl(
@@ -196,6 +245,30 @@ export class AssetService {
       throw this.notFound();
     }
     return asset;
+  }
+
+  private async auditRead(
+    actor: AuthenticatedUser,
+    nodeId: string,
+    versionId: string,
+    mode: 'preview' | 'download' | 'version-download',
+    expiresAt: string,
+    metadata: AuthorizationRequestMetadata,
+  ): Promise<void> {
+    await this.prisma.auditEvent.create({
+      data: {
+        tenantId: actor.tenantId,
+        actorUserId: actor.userId,
+        action: `asset.${mode}`,
+        resourceType: 'NODE',
+        resourceId: nodeId,
+        result: 'SUCCEEDED',
+        ipAddress: metadata.ipAddress ?? null,
+        userAgent: metadata.userAgent ?? null,
+        requestId: metadata.requestId ?? null,
+        details: { versionId, expiresAt },
+      },
+    });
   }
 
   private conflict(message: string): ApiException {

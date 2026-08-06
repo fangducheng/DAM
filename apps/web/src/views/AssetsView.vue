@@ -11,8 +11,11 @@ import {
   KeyRound,
   LoaderCircle,
   Pencil,
+  Plus,
   RefreshCw,
   RotateCcw,
+  Search,
+  Tags,
   Trash2,
   Upload,
   X,
@@ -48,6 +51,22 @@ interface VersionSummary {
   checksumSha256?: string;
   createdAt: string;
   createdBy?: { id: string; displayName: string };
+  extraction?: { parserVersion: string; extractedAt: string } | null;
+  renditions?: Array<{ id: string; type: string; variant: string; status: string }>;
+  processingJobs?: Array<{
+    id: string;
+    jobType: string;
+    status: string;
+    attempts: number;
+    maxAttempts: number;
+    errorMessage: string | null;
+  }>;
+}
+
+interface TagSummary {
+  id: string;
+  name: string;
+  color: string | null;
 }
 
 interface AssetSummary {
@@ -57,6 +76,7 @@ interface AssetSummary {
   category: string | null;
   currentVersion: VersionSummary | null;
   _count: { versions: number };
+  tags?: TagSummary[];
 }
 
 interface ResourceNode {
@@ -112,6 +132,7 @@ const showFolder = ref(false);
 const showRename = ref(false);
 const showDelete = ref(false);
 const showVersions = ref(false);
+const showTags = ref(false);
 const submitting = ref(false);
 const selectedNode = ref<ResourceNode | null>(null);
 const versions = ref<VersionSummary[]>([]);
@@ -122,6 +143,13 @@ const versionTarget = ref<AssetSummary | null>(null);
 const uploadTasks = reactive<UploadTask[]>([]);
 const folderName = ref('');
 const renameValue = ref('');
+const searchQuery = ref('');
+const selectedSearchTagId = ref('');
+const searchActive = ref(false);
+const spaceTags = ref<TagSummary[]>([]);
+const assetTagIds = ref<string[]>([]);
+const newTagName = ref('');
+const newTagColor = ref('#2f6f8f');
 let nextTaskId = 1;
 
 const selectedSpace = computed(
@@ -167,6 +195,10 @@ async function load(): Promise<void> {
       ).items;
       return;
     }
+    if (searchActive.value) {
+      await searchAssets();
+      return;
+    }
     const parameters = new URLSearchParams({ limit: '100' });
     if (folderId.value !== null) parameters.set('parentId', folderId.value);
     const page = await apiRequest<NodePage>(
@@ -187,16 +219,75 @@ async function load(): Promise<void> {
 async function changeSpace(): Promise<void> {
   folderId.value = null;
   breadcrumb.value = [];
+  searchActive.value = false;
+  searchQuery.value = '';
+  selectedSearchTagId.value = '';
+  await loadSpaceTags();
   await load();
 }
 
 async function switchMode(nextMode: 'files' | 'recycle'): Promise<void> {
   mode.value = nextMode;
+  if (nextMode === 'recycle') searchActive.value = false;
   await load();
 }
 
 async function openFolder(id: string | null): Promise<void> {
+  searchActive.value = false;
+  searchQuery.value = '';
+  selectedSearchTagId.value = '';
   folderId.value = id;
+  await load();
+}
+
+async function loadSpaceTags(): Promise<void> {
+  if (!selectedSpaceId.value) {
+    spaceTags.value = [];
+    return;
+  }
+  try {
+    spaceTags.value = await apiRequest<TagSummary[]>(
+      `/api/v1/spaces/${selectedSpaceId.value}/tags`,
+    );
+  } catch (error) {
+    spaceTags.value = [];
+    notifyError(error, '标签加载失败');
+  }
+}
+
+async function runSearch(): Promise<void> {
+  searchActive.value = searchQuery.value.trim().length > 0 || selectedSearchTagId.value.length > 0;
+  if (!searchActive.value) {
+    await load();
+    return;
+  }
+  await searchAssets();
+}
+
+async function searchAssets(): Promise<void> {
+  if (!selectedSpaceId.value) return;
+  loading.value = true;
+  try {
+    const parameters = new URLSearchParams({ limit: '100' });
+    if (searchQuery.value.trim()) parameters.set('q', searchQuery.value.trim());
+    if (selectedSearchTagId.value) parameters.set('tagIds', selectedSearchTagId.value);
+    nodes.value = (
+      await apiRequest<Page<ResourceNode>>(
+        `/api/v1/spaces/${selectedSpaceId.value}/search?${parameters.toString()}`,
+      )
+    ).items;
+  } catch (error) {
+    nodes.value = [];
+    notifyError(error, '资产搜索失败');
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function clearSearch(): Promise<void> {
+  searchQuery.value = '';
+  selectedSearchTagId.value = '';
+  searchActive.value = false;
   await load();
 }
 
@@ -299,11 +390,19 @@ async function uploadFile(file: File, assetId: string | null): Promise<void> {
     task.state = 'processing';
     task.progress = 97;
     task.message = '校验文件并写入版本';
-    await apiRequest(`/api/v1/upload-sessions/${session.id}/complete`, { method: 'POST' });
+    const completed = await apiRequest<{ status: string; scanStatus: string }>(
+      `/api/v1/upload-sessions/${session.id}/complete`,
+      { method: 'POST' },
+    );
     task.state = 'complete';
     task.progress = 100;
-    task.message = assetId === null ? '上传完成' : '新版本已创建';
-    notify('success', task.message, file.name);
+    task.message =
+      completed.status === 'AVAILABLE'
+        ? assetId === null
+          ? '上传完成'
+          : '新版本已创建'
+        : '已上传，等待安全处理';
+    notify(completed.status === 'AVAILABLE' ? 'success' : 'info', task.message, file.name);
     window.setTimeout(() => removeTask(task.id), 3500);
     await load();
     if (assetId !== null && showVersions.value) await loadVersions(assetId);
@@ -465,6 +564,80 @@ function openPermissions(node: ResourceNode): void {
   void router.push({ path: '/permissions', query: { nodeId: node.id } });
 }
 
+async function openTagEditor(node: ResourceNode): Promise<void> {
+  if (node.asset === null) return;
+  selectedNode.value = node;
+  showTags.value = true;
+  try {
+    const [allTags, assigned] = await Promise.all([
+      apiRequest<TagSummary[]>(`/api/v1/spaces/${selectedSpaceId.value}/tags`),
+      apiRequest<TagSummary[]>(`/api/v1/assets/${node.asset.id}/tags`),
+    ]);
+    spaceTags.value = allTags;
+    assetTagIds.value = assigned.map((tag) => tag.id);
+  } catch (error) {
+    notifyError(error, '资产标签加载失败');
+  }
+}
+
+async function createTag(): Promise<void> {
+  if (!newTagName.value.trim()) return;
+  submitting.value = true;
+  try {
+    const created = await apiRequest<TagSummary>(`/api/v1/spaces/${selectedSpaceId.value}/tags`, {
+      method: 'POST',
+      body: JSON.stringify({ name: newTagName.value, color: newTagColor.value }),
+    });
+    newTagName.value = '';
+    await loadSpaceTags();
+    assetTagIds.value = [...new Set([...assetTagIds.value, created.id])];
+  } catch (error) {
+    notifyError(error, '标签创建失败');
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function removeTag(tag: TagSummary): Promise<void> {
+  try {
+    await apiRequest<void>(`/api/v1/spaces/${selectedSpaceId.value}/tags/${tag.id}`, {
+      method: 'DELETE',
+    });
+    assetTagIds.value = assetTagIds.value.filter((id) => id !== tag.id);
+    await loadSpaceTags();
+  } catch (error) {
+    notifyError(error, '标签删除失败');
+  }
+}
+
+async function saveAssetTags(): Promise<void> {
+  const assetId = selectedNode.value?.asset?.id;
+  if (assetId === undefined) return;
+  submitting.value = true;
+  try {
+    await apiRequest(`/api/v1/assets/${assetId}/tags`, {
+      method: 'PUT',
+      body: JSON.stringify({ tagIds: assetTagIds.value }),
+    });
+    showTags.value = false;
+    notify('success', '资产标签已更新');
+    await load();
+  } catch (error) {
+    notifyError(error, '资产标签保存失败');
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function processingLabel(version: VersionSummary): string {
+  if (version.scanStatus === 'INFECTED') return '已拒绝';
+  if (version.status === 'FAILED') return '处理失败';
+  if (version.status === 'AVAILABLE') return version.scanStatus === 'SKIPPED' ? '本地可用' : '可用';
+  const running = version.processingJobs?.find((job) => job.status === 'RUNNING');
+  if (running?.jobType === 'MALWARE_SCAN') return '安全扫描';
+  return '处理中';
+}
+
 function formatBytes(value: string | number): string {
   const bytes = Number(value);
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -488,6 +661,7 @@ function formatTime(value: string | null): string {
 
 onMounted(async () => {
   await loadSpaces();
+  await loadSpaceTags();
   await load();
 });
 </script>
@@ -594,20 +768,49 @@ onMounted(async () => {
     </button>
   </div>
 
+  <form v-if="mode === 'files'" class="asset-search-toolbar" @submit.prevent="runSearch">
+    <label class="search-field">
+      <Search :size="16" aria-hidden="true" />
+      <input v-model="searchQuery" maxlength="200" placeholder="搜索文件名或文档内容" />
+    </label>
+    <label class="tag-filter">
+      <span class="sr-only">按标签筛选</span>
+      <select v-model="selectedSearchTagId">
+        <option value="">全部标签</option>
+        <option v-for="tag in spaceTags" :key="tag.id" :value="tag.id">{{ tag.name }}</option>
+      </select>
+    </label>
+    <button class="primary-button compact" type="submit"><Search :size="15" />搜索</button>
+    <button
+      v-if="searchActive"
+      class="icon-button"
+      type="button"
+      title="清除搜索"
+      @click="clearSearch"
+    >
+      <X :size="16" />
+    </button>
+  </form>
+
   <section v-if="mode === 'files'" class="asset-browser">
     <nav class="breadcrumb" aria-label="当前目录">
-      <button type="button" :class="{ current: folderId === null }" @click="openFolder(null)">
-        资产库
-      </button>
-      <template v-for="item in breadcrumb" :key="item.id">
-        <span>/</span>
-        <button
-          type="button"
-          :class="{ current: item.id === folderId }"
-          @click="openFolder(item.id)"
-        >
-          {{ item.name }}
+      <template v-if="searchActive">
+        <Search :size="14" /><strong>搜索结果</strong><span>{{ nodes.length }} 项</span>
+      </template>
+      <template v-else>
+        <button type="button" :class="{ current: folderId === null }" @click="openFolder(null)">
+          资产库
         </button>
+        <template v-for="item in breadcrumb" :key="item.id">
+          <span>/</span>
+          <button
+            type="button"
+            :class="{ current: item.id === folderId }"
+            @click="openFolder(item.id)"
+          >
+            {{ item.name }}
+          </button>
+        </template>
       </template>
     </nav>
 
@@ -668,6 +871,15 @@ onMounted(async () => {
             <History :size="15" />
           </button>
           <button
+            v-if="node.nodeType === 'ASSET'"
+            class="icon-button small"
+            type="button"
+            title="资产标签"
+            @click="openTagEditor(node)"
+          >
+            <Tags :size="15" />
+          </button>
+          <button
             class="icon-button small"
             type="button"
             title="目录权限"
@@ -690,9 +902,10 @@ onMounted(async () => {
       </div>
     </div>
     <div v-else class="empty-state asset-empty">
-      <Upload :size="28" />
-      <strong>当前目录暂无文件</strong>
-      <button class="primary-button" type="button" @click="chooseFiles()">
+      <Search v-if="searchActive" :size="28" />
+      <Upload v-else :size="28" />
+      <strong>{{ searchActive ? '没有匹配的资产' : '当前目录暂无文件' }}</strong>
+      <button v-if="!searchActive" class="primary-button" type="button" @click="chooseFiles()">
         <Upload :size="16" />上传文件
       </button>
     </div>
@@ -775,6 +988,44 @@ onMounted(async () => {
   </ModalDialog>
 
   <ModalDialog
+    v-if="showTags"
+    :title="`${selectedNode?.name ?? ''} · 资产标签`"
+    @close="showTags = false"
+  >
+    <div class="tag-editor">
+      <div v-if="spaceTags.length > 0" class="tag-choice-list">
+        <label v-for="tag in spaceTags" :key="tag.id" class="tag-choice">
+          <input v-model="assetTagIds" type="checkbox" :value="tag.id" />
+          <span class="tag-swatch" :style="{ backgroundColor: tag.color ?? '#77838a' }"></span>
+          <strong>{{ tag.name }}</strong>
+          <button
+            class="icon-button small danger"
+            type="button"
+            title="删除标签"
+            @click.prevent="removeTag(tag)"
+          >
+            <Trash2 :size="14" />
+          </button>
+        </label>
+      </div>
+      <div v-else class="empty-state compact"><Tags :size="22" /><strong>暂无标签</strong></div>
+      <form class="tag-create-row" @submit.prevent="createTag">
+        <input v-model="newTagColor" type="color" title="标签颜色" />
+        <input v-model="newTagName" maxlength="100" placeholder="新标签名称" />
+        <button class="secondary-button compact" type="submit" :disabled="submitting">
+          <Plus :size="15" />新建
+        </button>
+      </form>
+    </div>
+    <div class="modal-actions">
+      <button class="secondary-button" type="button" @click="showTags = false">取消</button>
+      <button class="primary-button" type="button" :disabled="submitting" @click="saveAssetTags">
+        保存标签
+      </button>
+    </div>
+  </ModalDialog>
+
+  <ModalDialog
     v-if="showVersions"
     :title="`${selectedNode?.name ?? ''} · 版本历史`"
     wide
@@ -800,9 +1051,18 @@ onMounted(async () => {
         <div>
           <strong>{{ formatBytes(version.sizeBytes) }} · {{ version.mimeType }}</strong>
           <small>{{ formatTime(version.createdAt) }} · {{ version.createdBy?.displayName }}</small>
+          <small v-if="version.processingJobs?.some((job) => job.status === 'DEAD')">
+            {{ version.processingJobs.find((job) => job.status === 'DEAD')?.errorMessage }}
+          </small>
         </div>
-        <span class="status-badge" :class="{ active: version.status === 'AVAILABLE' }">
-          {{ version.status === 'AVAILABLE' ? '可用' : '处理中' }}
+        <span
+          class="status-badge"
+          :class="{
+            active: version.status === 'AVAILABLE',
+            disabled: version.status === 'FAILED' || version.status === 'REJECTED',
+          }"
+        >
+          {{ processingLabel(version) }}
         </span>
         <span class="row-actions">
           <span v-if="version.id === currentVersionId" class="current-version">当前</span>
@@ -815,6 +1075,7 @@ onMounted(async () => {
             <RotateCcw :size="14" />设为当前
           </button>
           <button
+            v-if="version.status === 'AVAILABLE'"
             class="icon-button small"
             type="button"
             title="下载此版本"

@@ -6,9 +6,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "bootstrap:identity": "tsx src/identity/bootstrap.ts",
+    "fixture:ui": "tsx tools/ui-fixture.ts",
     "dev": "node --watch --enable-source-maps --import tsx src/main.ts",
     "start": "node --enable-source-maps dist/main.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tools/tsconfig.json",
     "test": "vitest run",
     "test:identity:integration": "vitest run src/identity/identity.integration.spec.ts",
     "test:asset:integration": "vitest run src/resource/asset-workflow.integration.spec.ts"

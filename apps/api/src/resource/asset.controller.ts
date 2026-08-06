@@ -39,8 +39,12 @@ export class AssetController {
 
   @Get('resource-nodes/:nodeId/preview')
   @ApiOperation({ summary: 'Issue an authorized short-lived inline preview URL' })
-  preview(@CurrentUser() actor: AuthenticatedUser, @Param('nodeId', ParseUUIDPipe) nodeId: string) {
-    return this.assets.nodeUrl(actor, nodeId, 'preview');
+  preview(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.assets.nodeUrl(actor, nodeId, 'preview', requestMetadata(request));
   }
 
   @Get('resource-nodes/:nodeId/download')
@@ -48,8 +52,9 @@ export class AssetController {
   download(
     @CurrentUser() actor: AuthenticatedUser,
     @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @Req() request: FastifyRequest,
   ) {
-    return this.assets.nodeUrl(actor, nodeId, 'download');
+    return this.assets.nodeUrl(actor, nodeId, 'download', requestMetadata(request));
   }
 
   @Get('asset-versions/:versionId/download')
@@ -57,7 +62,8 @@ export class AssetController {
   versionDownload(
     @CurrentUser() actor: AuthenticatedUser,
     @Param('versionId', ParseUUIDPipe) versionId: string,
+    @Req() request: FastifyRequest,
   ) {
-    return this.assets.versionDownload(actor, versionId);
+    return this.assets.versionDownload(actor, versionId, requestMetadata(request));
   }
 }

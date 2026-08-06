@@ -5,6 +5,8 @@
 Deliver a local-first, fail-closed asset processing pipeline and the discovery and operational
 interfaces needed to use it, while keeping ClamAV and document/media processors optional.
 
+Status: completed on 2026-08-06.
+
 ## Work items
 
 1. Extend the schema and configuration for leased idempotent jobs, normalized tags, search indexes,
@@ -31,4 +33,3 @@ interfaces needed to use it, while keeping ClamAV and document/media processors 
 - Default local services remain PostgreSQL, Redis, and MinIO; optional processors do not consume
   memory unless their profiles are enabled.
 - `pnpm verify` and the desktop/mobile Playwright flow pass.
-

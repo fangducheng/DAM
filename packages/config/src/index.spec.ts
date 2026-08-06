@@ -11,6 +11,8 @@ describe('validateEnvironment', () => {
     expect(environment.DATABASE_URL).toContain('localhost:5433');
     expect(environment.NODE_ENV).toBe('development');
     expect(environment.ASSET_PROCESSING_MODE).toBe('local-bypass');
+    expect(environment.PROCESSING_WORKER_ENABLED).toBe(false);
+    expect(environment.CLAMAV_ENABLED).toBe(false);
   });
 
   it('rejects an invalid API port', () => {
@@ -43,5 +45,36 @@ describe('validateEnvironment', () => {
       validateEnvironment({ ...production, ASSET_PROCESSING_MODE: 'deferred' })
         .ASSET_PROCESSING_MODE,
     ).toBe('deferred');
+  });
+
+  it('parses processing worker controls and validates their ranges', () => {
+    const environment = validateEnvironment({
+      PROCESSING_WORKER_ENABLED: 'true',
+      CLAMAV_ENABLED: 'true',
+      PROCESSING_POLL_INTERVAL_MS: '500',
+    });
+
+    expect(environment.PROCESSING_WORKER_ENABLED).toBe(true);
+    expect(environment.CLAMAV_ENABLED).toBe(true);
+    expect(environment.PROCESSING_POLL_INTERVAL_MS).toBe(500);
+    expect(() => validateEnvironment({ PROCESSING_LEASE_SECONDS: '10' })).toThrow();
+  });
+
+  it('requires ClamAV when the production processing worker is enabled', () => {
+    const production = {
+      NODE_ENV: 'production',
+      COOKIE_SECURE: 'true',
+      JWT_ACCESS_SECRET: 'production-jwt-secret-with-at-least-32-characters',
+      PASSWORD_PEPPER: 'production-password-pepper',
+      TOKEN_HASH_SECRET: 'production-token-hash-secret-with-at-least-32-characters',
+      TOTP_ENCRYPTION_KEY: 'production-totp-key-with-at-least-32-characters',
+      ASSET_PROCESSING_MODE: 'deferred',
+      PROCESSING_WORKER_ENABLED: 'true',
+    } as const;
+
+    expect(() => validateEnvironment(production)).toThrow();
+    expect(validateEnvironment({ ...production, CLAMAV_ENABLED: 'true' }).CLAMAV_ENABLED).toBe(
+      true,
+    );
   });
 });

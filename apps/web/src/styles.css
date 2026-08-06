@@ -1281,6 +1281,115 @@ h2 {
   box-shadow: 0 1px 2px rgba(24, 36, 43, 0.12);
 }
 
+.asset-search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.search-field {
+  display: flex;
+  min-width: 220px;
+  max-width: 560px;
+  height: 38px;
+  flex: 1 1 360px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+}
+
+.search-field input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+
+.tag-filter select,
+.compact-select select {
+  height: 38px;
+  padding: 0 30px 0 10px;
+  color: #33434d;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+}
+
+.tag-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.tag-choice-list {
+  display: grid;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.tag-choice {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: 18px 12px minmax(0, 1fr) 30px;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tag-choice:last-child {
+  border-bottom: 0;
+}
+
+.tag-choice strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.tag-create-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.tag-create-row input[type='color'] {
+  width: 38px;
+  height: 36px;
+  padding: 3px;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+}
+
+.tag-create-row input:not([type='color']) {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+}
+
+.empty-state.compact {
+  min-height: 100px;
+}
+
 .asset-browser {
   min-height: 450px;
   overflow: hidden;
@@ -1497,6 +1606,81 @@ h2 {
   color: var(--green);
 }
 
+.notification-table .table-row {
+  grid-template-columns: minmax(260px, 1fr) 90px 170px 80px;
+}
+
+.notification-copy,
+.audit-action,
+.audit-resource {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.notification-copy strong,
+.notification-copy small,
+.audit-action strong,
+.audit-action small,
+.audit-resource strong,
+.audit-resource small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-copy small,
+.audit-action small,
+.audit-resource small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.audit-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 120px 190px 190px auto;
+  gap: 10px;
+  align-items: end;
+  margin: -8px 0 16px;
+  padding: 12px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.audit-table .table-row {
+  grid-template-columns: 160px 170px minmax(190px, 1fr) minmax(180px, 1fr) 110px;
+}
+
+.audit-section {
+  overflow-x: auto;
+}
+
+.audit-details {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.audit-details summary {
+  cursor: pointer;
+}
+
+.audit-details pre {
+  position: absolute;
+  z-index: 5;
+  width: min(520px, calc(100vw - 48px));
+  max-height: 260px;
+  margin: 5px 0 0;
+  padding: 10px;
+  overflow: auto;
+  color: #eaf0f3;
+  background: #26333b;
+  border-radius: 5px;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 1100px) {
   .app-shell {
     grid-template-columns: 76px minmax(0, 1fr);
@@ -1568,9 +1752,10 @@ h2 {
   .primary-nav {
     display: grid;
     height: 64px;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-columns: repeat(9, minmax(48px, 1fr));
     gap: 0;
     margin: 0;
+    overflow-x: auto;
   }
 
   .nav-item {
@@ -1730,6 +1915,38 @@ h2 {
   .version-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .asset-search-toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .search-field {
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .tag-filter {
+    flex: 1 1 auto;
+  }
+
+  .tag-filter select {
+    width: 100%;
+  }
+
+  .notification-table .table-row,
+  .audit-table .table-row {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-table .table-header,
+  .audit-table .table-header {
+    display: none;
+  }
+
+  .audit-toolbar {
+    grid-template-columns: 1fr;
   }
 
   .version-row {

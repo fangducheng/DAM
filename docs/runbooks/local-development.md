@@ -60,6 +60,38 @@ workstation and records versions with scan status `SKIPPED`. It never records a 
 `CLEAN`, and production environment validation rejects this mode. Use `deferred` whenever files
 must remain quarantined for a processing worker.
 
+## Asset processing modes
+
+The default local profile keeps `PROCESSING_WORKER_ENABLED=false`, `CLAMAV_ENABLED=false`, and
+`ASSET_PROCESSING_MODE=local-bypass`. Start the API and Web console with `pnpm dev`; a separate
+worker is unnecessary in this mode.
+
+To exercise fail-closed processing locally, start ClamAV and change the matching values in `.env`:
+
+```powershell
+docker compose --profile processing up -d clamav
+```
+
+```dotenv
+ASSET_PROCESSING_MODE=deferred
+PROCESSING_WORKER_ENABLED=true
+CLAMAV_ENABLED=true
+CLAMAV_HOST=127.0.0.1
+```
+
+Restart the API after changing the mode, then run the worker in a second terminal:
+
+```powershell
+pnpm dev:worker
+```
+
+The worker reads source objects as streams and uses PostgreSQL `processing_jobs` as its local
+reliable queue. A file remains quarantined until ClamAV explicitly returns `CLEAN`. Timeouts,
+unavailable processors, malformed responses, and terminal scan errors never publish the file.
+Content extraction uses the bounded built-in text parser by default. Enable `TIKA_ENABLED` only
+when a Tika service is running at `TIKA_ENDPOINT`; unsupported extraction or preview formats do not
+make an already clean source unavailable.
+
 ## Common failures
 
 - Port `5432` belongs to another local project. DAM deliberately uses `5433`.
@@ -67,6 +99,9 @@ must remain quarantined for a processing worker.
 - If Docker memory pressure is high, stop optional profiles before restarting Docker Desktop.
 - If a Refresh Token is replayed, all sessions in that token family are revoked and the event is
   written to the audit log. Log in again instead of retrying the old cookie.
+- If a deferred asset stays quarantined, confirm ClamAV is healthy and the worker process is
+  running. The job is retried with exponential backoff and preserves its terminal error for
+  administrator diagnosis.
 - Never reuse `.env.example` credentials outside the local workstation.
 
 ## Shutdown

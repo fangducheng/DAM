@@ -71,6 +71,9 @@ Filters include MIME family and tag IDs.
 
 Upload completion, initial job creation, and audit creation share one database transaction. Worker
 state transitions use compare-and-set updates so two workers cannot complete the same lease.
+Each worker process uses a unique lock token, and malware scan decisions lock and verify the active
+unexpired job lease before changing an asset version, so an expired worker cannot publish or reject
+content after another worker recovers the task.
 Retries use bounded exponential backoff and end in `DEAD`; administrators can inspect the terminal
 error without exposing internal stack traces to ordinary users.
 
@@ -87,4 +90,3 @@ preview/download URLs still require a fresh permission check and now append a re
 - API type checks, all workspace tests, production builds, and the root `pnpm verify` remain green.
 - Playwright verifies search, tag assignment, notifications, and audit browsing at desktop and
   mobile sizes without console errors or unexpected responses.
-

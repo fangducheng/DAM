@@ -6,6 +6,7 @@ import { validateEnvironment } from '@dam/config';
 
 import { AppController } from './app.controller.js';
 import { AuthorizationModule } from './authorization/authorization.module.js';
+import { DiscoveryModule } from './discovery/discovery.module.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/identity.module.js';
 import { InfrastructureModule } from './infrastructure/infrastructure.module.js';
@@ -45,6 +46,7 @@ import { TenantModule } from './tenant/tenant.module.js';
     HealthModule,
     IdentityModule,
     AuthorizationModule,
+    DiscoveryModule,
     ResourceModule,
     TenantModule,
     SpaceModule,

@@ -107,11 +107,59 @@ try {
   await page.screenshot({ path: desktopVersions, fullPage: true });
   await page.getByRole('dialog').getByTitle('关闭').click();
 
+  const assetRow = page.getByRole('button', { name: uploadFixtureName }).locator('..');
+  await assetRow.getByTitle('资产标签').click();
+  const tagDialog = page.getByRole('dialog');
+  await tagDialog.getByPlaceholder('新标签名称').fill('验收标签');
+  await tagDialog.getByRole('button', { name: '新建', exact: true }).click();
+  await tagDialog.getByRole('checkbox', { name: /验收标签/ }).check();
+  await tagDialog.getByRole('button', { name: '保存标签' }).click();
+  await tagDialog.waitFor({ state: 'detached' });
+
+  await page.getByPlaceholder('搜索文件名或文档内容').fill(uploadFixtureName.slice(0, 18));
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await page.getByRole('button', { name: uploadFixtureName }).waitFor();
+  const desktopSearch = join(outputDirectory, 'asset-search-desktop.png');
+  await page.screenshot({ path: desktopSearch, fullPage: true });
+  const desktopSearchOverflow = await hasPageOverflow(page);
+
+  await page.getByRole('link', { name: '通知', exact: true }).click();
+  await page.waitForURL('**/notifications');
+  await waitForView(page);
+  const desktopNotifications = join(outputDirectory, 'notifications-desktop.png');
+  await page.screenshot({ path: desktopNotifications, fullPage: true });
+  const desktopNotificationsOverflow = await hasPageOverflow(page);
+
+  await page.getByRole('link', { name: '审计日志' }).click();
+  await page.waitForURL('**/audit');
+  await waitForView(page);
+  const desktopAudit = join(outputDirectory, 'audit-desktop.png');
+  await page.screenshot({ path: desktopAudit, fullPage: true });
+  const desktopAuditOverflow = await hasPageOverflow(page);
+
+  await page.getByRole('link', { name: '资产库' }).click();
+  await page.waitForURL('**/assets');
+  await waitForView(page);
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
   const mobileAssets = join(outputDirectory, 'assets-mobile.png');
   await page.screenshot({ path: mobileAssets, fullPage: true });
   const mobileAssetsOverflow = await hasPageOverflow(page);
+
+  await page.getByRole('link', { name: '通知', exact: true }).click();
+  await page.waitForURL('**/notifications');
+  await waitForView(page);
+  const mobileNotifications = join(outputDirectory, 'notifications-mobile.png');
+  await page.screenshot({ path: mobileNotifications, fullPage: true });
+  const mobileNotificationsOverflow = await hasPageOverflow(page);
+
+  await page.getByRole('link', { name: '审计日志' }).click();
+  await page.waitForURL('**/audit');
+  await waitForView(page);
+  const mobileAudit = join(outputDirectory, 'audit-mobile.png');
+  await page.screenshot({ path: mobileAudit, fullPage: true });
+  const mobileAuditOverflow = await hasPageOverflow(page);
 
   await page.getByRole('link', { name: '目录权限' }).click();
   await page.waitForURL('**/permissions');
@@ -126,7 +174,12 @@ try {
       desktopSpaces,
       desktopAssets,
       desktopVersions,
+      desktopSearch,
+      desktopNotifications,
+      desktopAudit,
       mobileAssets,
+      mobileNotifications,
+      mobileAudit,
       mobilePermissions,
     },
     overflow: {
@@ -134,7 +187,12 @@ try {
       desktopOrganizations: desktopOrganizationsOverflow,
       desktopSpaces: desktopSpacesOverflow,
       desktopAssets: desktopAssetsOverflow,
+      desktopSearch: desktopSearchOverflow,
+      desktopNotifications: desktopNotificationsOverflow,
+      desktopAudit: desktopAuditOverflow,
       mobileAssets: mobileAssetsOverflow,
+      mobileNotifications: mobileNotificationsOverflow,
+      mobileAudit: mobileAuditOverflow,
       mobilePermissions: mobilePermissionsOverflow,
     },
     consoleErrors,

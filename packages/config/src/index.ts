@@ -49,6 +49,39 @@ export const environmentSchema = z
     ASSET_UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
     ASSET_READ_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(900).default(60),
     ASSET_PROCESSING_MODE: z.enum(['deferred', 'local-bypass']).default('local-bypass'),
+    PROCESSING_WORKER_ENABLED: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .default(false),
+    PROCESSING_WORKER_ID: z.string().min(1).max(120).default('dam-worker-local'),
+    PROCESSING_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(30_000).default(2_000),
+    PROCESSING_LEASE_SECONDS: z.coerce.number().int().min(30).max(1_800).default(120),
+    PROCESSING_RETRY_BASE_SECONDS: z.coerce.number().int().min(1).max(300).default(5),
+    CLAMAV_ENABLED: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .default(false),
+    CLAMAV_HOST: z.string().min(1).default('127.0.0.1'),
+    CLAMAV_PORT: z.coerce.number().int().min(1).max(65_535).default(3310),
+    CLAMAV_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(900_000).default(120_000),
+    CLAMAV_MAX_STREAM_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1_048_576)
+      .max(4_294_967_295)
+      .default(536_870_912),
+    TIKA_ENABLED: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .default(false),
+    TIKA_ENDPOINT: z.string().url().default('http://127.0.0.1:9998'),
+    TIKA_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(900_000).default(120_000),
+    CONTENT_EXTRACTION_MAX_CHARS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(10_000_000)
+      .default(1_000_000),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     APP_VERSION: z.string().default('0.1.0'),
   })
@@ -87,6 +120,14 @@ export const environmentSchema = z
         code: 'custom',
         path: ['ASSET_PROCESSING_MODE'],
         message: 'ASSET_PROCESSING_MODE must be deferred in production',
+      });
+    }
+
+    if (environment.PROCESSING_WORKER_ENABLED && !environment.CLAMAV_ENABLED) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CLAMAV_ENABLED'],
+        message: 'CLAMAV_ENABLED must be true for a production processing worker',
       });
     }
   });

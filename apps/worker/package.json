@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@dam/config": "workspace:*",
+    "@dam/database": "workspace:*",
     "@nestjs/common": "^11.1.0",
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.1.0",
+    "minio": "^8.0.0",
     "nestjs-pino": "^4.4.0",
     "pino": "^9.9.0",
     "pino-http": "^11.0.0",
