@@ -8,17 +8,20 @@
     "dev": "vite --host 0.0.0.0",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "verify:ui": "node tools/verify-ui.mjs"
   },
   "dependencies": {
     "@dam/contracts": "workspace:*",
     "@lucide/vue": "^1.28.0",
-    "vue": "^3.5.0"
+    "vue": "^3.5.0",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.0",
     "@vitejs/plugin-vue": "^6.0.0",
     "@vue/tsconfig": "^0.8.0",
+    "playwright-core": "^1.62.1",
     "vite": "^7.0.0",
     "vue-tsc": "^3.1.0"
   }
