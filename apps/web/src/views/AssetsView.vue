@@ -142,6 +142,7 @@ const nodes = ref<ResourceNode[]>([]);
 const recycleItems = ref<ResourceNode[]>([]);
 const mode = ref<'files' | 'recycle'>('files');
 const loading = ref(true);
+const loadError = ref('');
 const showFolder = ref(false);
 const showRename = ref(false);
 const showDelete = ref(false);
@@ -198,10 +199,12 @@ async function load(): Promise<void> {
   if (!selectedSpaceId.value) {
     nodes.value = [];
     recycleItems.value = [];
+    loadError.value = '';
     loading.value = false;
     return;
   }
   loading.value = true;
+  loadError.value = '';
   try {
     if (mode.value === 'recycle') {
       recycleItems.value = (
@@ -226,6 +229,10 @@ async function load(): Promise<void> {
   } catch (error) {
     nodes.value = [];
     recycleItems.value = [];
+    loadError.value =
+      mode.value === 'recycle'
+        ? '回收站暂时无法加载，请检查网络后重试'
+        : '资产列表暂时无法加载，请检查网络后重试';
     notifyError(error, '资产加载失败');
   } finally {
     loading.value = false;
@@ -283,6 +290,7 @@ async function runSearch(): Promise<void> {
 async function searchAssets(): Promise<void> {
   if (!selectedSpaceId.value) return;
   loading.value = true;
+  loadError.value = '';
   try {
     const parameters = new URLSearchParams({ limit: '100' });
     if (searchQuery.value.trim()) parameters.set('q', searchQuery.value.trim());
@@ -294,6 +302,7 @@ async function searchAssets(): Promise<void> {
     ).items;
   } catch (error) {
     nodes.value = [];
+    loadError.value = '搜索结果暂时无法加载，请检查网络后重试';
     notifyError(error, '资产搜索失败');
   } finally {
     loading.value = false;
@@ -882,6 +891,12 @@ onMounted(async () => {
     <div v-if="loading" class="loading-state">
       <LoaderCircle class="spinning" :size="20" />加载资产
     </div>
+    <div v-else-if="loadError" class="empty-state asset-empty error-state" role="alert">
+      <AlertTriangle :size="28" /><strong>{{ loadError }}</strong>
+      <button class="secondary-button" type="button" @click="load">
+        <RefreshCw :size="16" />重新加载
+      </button>
+    </div>
     <div v-else-if="sortedNodes.length > 0" class="asset-table">
       <div class="asset-row asset-row-header">
         <span>名称</span><span>大小</span><span>修改时间</span><span>创建者</span><span></span>
@@ -979,6 +994,12 @@ onMounted(async () => {
   <section v-else class="asset-browser">
     <div v-if="loading" class="loading-state">
       <LoaderCircle class="spinning" :size="20" />加载回收站
+    </div>
+    <div v-else-if="loadError" class="empty-state asset-empty error-state" role="alert">
+      <AlertTriangle :size="28" /><strong>{{ loadError }}</strong>
+      <button class="secondary-button" type="button" @click="load">
+        <RefreshCw :size="16" />重新加载
+      </button>
     </div>
     <div v-else-if="recycleItems.length > 0" class="asset-table recycle-table">
       <div class="asset-row asset-row-header">

@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Client } from 'minio';
+import { Client, type BucketItem } from 'minio';
+
+export interface TenantStorageObject {
+  objectKey: string;
+  sizeBytes: bigint;
+  lastModified: Date;
+}
 
 @Injectable()
 export class ObjectStorageService {
@@ -30,6 +36,37 @@ export class ObjectStorageService {
 
   bucketName(): string {
     return this.bucket;
+  }
+
+  async *listTenantObjects(tenantId: string): AsyncGenerator<TenantStorageObject> {
+    const prefix = `tenants/${tenantId}/`;
+    const objects = this.client.listObjectsV2(
+      this.bucket,
+      prefix,
+      true,
+    ) as AsyncIterable<BucketItem>;
+    for await (const object of objects) {
+      if (object.name === undefined) {
+        continue;
+      }
+      yield {
+        objectKey: object.name,
+        sizeBytes: BigInt(object.size),
+        lastModified: object.lastModified,
+      };
+    }
+  }
+
+  async objectExists(bucket: string, objectKey: string): Promise<boolean> {
+    try {
+      await this.client.statObject(bucket, objectKey);
+      return true;
+    } catch (error) {
+      if (this.isMissingObjectError(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   initiateMultipart(objectKey: string, mimeType: string): Promise<string> {
@@ -86,5 +123,12 @@ export class ObjectStorageService {
     responseHeaders: Record<string, string>,
   ): Promise<string> {
     return this.client.presignedGetObject(this.bucket, objectKey, expiresSeconds, responseHeaders);
+  }
+
+  private isMissingObjectError(error: unknown): boolean {
+    if (typeof error !== 'object' || error === null || !('code' in error)) {
+      return false;
+    }
+    return ['NoSuchKey', 'NoSuchObject', 'NotFound'].includes(String(error.code));
   }
 }

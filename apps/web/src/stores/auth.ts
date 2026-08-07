@@ -1,6 +1,10 @@
 import { reactive } from 'vue';
 
-import type { AuthenticatedUser } from '@dam/contracts';
+import type {
+  AuthenticatedUser,
+  CurrentCapabilitiesResponse,
+  PermissionCode,
+} from '@dam/contracts';
 
 import { apiRequest, clearAccessToken, refreshAccessToken, setAccessToken } from '../lib/api';
 import type { MfaChallengeResponse, SessionResponse } from '../lib/types';
@@ -10,6 +14,8 @@ type AuthStatus = 'bootstrapping' | 'anonymous' | 'authenticated' | 'mfa_require
 interface AuthState {
   status: AuthStatus;
   user: AuthenticatedUser | null;
+  authorizationVersion: string | null;
+  permissions: PermissionCode[];
   challengeToken: string | null;
   challengeExpiresAt: number | null;
 }
@@ -17,11 +23,15 @@ interface AuthState {
 const state = reactive<AuthState>({
   status: 'bootstrapping',
   user: null,
+  authorizationVersion: null,
+  permissions: [],
   challengeToken: null,
   challengeExpiresAt: null,
 });
 
 let bootstrapPromise: Promise<void> | null = null;
+let capabilitiesPromise: Promise<void> | null = null;
+let capabilitiesSessionId: string | null = null;
 
 async function bootstrap(): Promise<void> {
   if (state.status !== 'bootstrapping') return;
@@ -53,7 +63,7 @@ async function login(input: {
     state.challengeExpiresAt = Date.now() + result.expiresInSeconds * 1000;
     return 'mfa_required';
   }
-  acceptSession(result);
+  await acceptSession(result);
   return 'authenticated';
 }
 
@@ -64,7 +74,7 @@ async function completeMfa(code: string): Promise<void> {
     auth: false,
     body: JSON.stringify({ challengeToken: state.challengeToken, code }),
   });
-  acceptSession(session);
+  await acceptSession(session);
 }
 
 async function logout(): Promise<void> {
@@ -75,25 +85,60 @@ async function logout(): Promise<void> {
   }
 }
 
-function acceptSession(session: SessionResponse): void {
+async function acceptSession(session: SessionResponse): Promise<void> {
   setAccessToken(session.accessToken);
   state.user = session.user;
   state.status = 'authenticated';
   state.challengeToken = null;
   state.challengeExpiresAt = null;
+  await loadCapabilities();
+}
+
+async function loadCapabilities(): Promise<void> {
+  const sessionId = state.user?.sessionId;
+  if (sessionId === undefined) return;
+  if (capabilitiesPromise !== null && capabilitiesSessionId === sessionId) {
+    return capabilitiesPromise;
+  }
+
+  capabilitiesSessionId = sessionId;
+  const current = apiRequest<CurrentCapabilitiesResponse>('/api/v1/identity/capabilities')
+    .then((response) => {
+      if (state.user?.sessionId !== sessionId) return;
+      state.authorizationVersion = response.authorizationVersion;
+      state.permissions = response.permissions;
+    })
+    .catch(() => {
+      if (state.user?.sessionId !== sessionId) return;
+      state.authorizationVersion = null;
+      state.permissions = [];
+    })
+    .finally(() => {
+      if (capabilitiesPromise !== current) return;
+      capabilitiesPromise = null;
+      capabilitiesSessionId = null;
+    });
+  capabilitiesPromise = current;
+  return current;
+}
+
+function hasPermission(permission: PermissionCode): boolean {
+  return state.permissions.includes(permission);
 }
 
 function setAnonymous(): void {
   clearAccessToken();
   state.status = 'anonymous';
   state.user = null;
+  state.authorizationVersion = null;
+  state.permissions = [];
   state.challengeToken = null;
   state.challengeExpiresAt = null;
 }
 
 if (typeof window !== 'undefined') {
   window.addEventListener('dam:session-refreshed', (event) => {
-    acceptSession((event as CustomEvent<SessionResponse>).detail);
+    void acceptSession((event as CustomEvent<SessionResponse>).detail);
   });
   window.addEventListener('dam:session-expired', () => setAnonymous());
 }
@@ -104,5 +149,7 @@ export const authStore = {
   login,
   completeMfa,
   logout,
+  loadCapabilities,
+  hasPermission,
   setAnonymous,
 };

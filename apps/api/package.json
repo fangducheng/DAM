@@ -7,10 +7,11 @@
     "build": "tsc -p tsconfig.build.json",
     "bootstrap:identity": "tsx src/identity/bootstrap.ts",
     "fixture:ui": "tsx tools/ui-fixture.ts",
-    "dev": "tsc -p tsconfig.build.json && concurrently -k -n tsc,node \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --enable-source-maps dist/main.js\"",
+    "dev": "node --max-old-space-size=384 --enable-source-maps dist/main.js",
+    "dev:watch": "concurrently -k -n tsc,node \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --max-old-space-size=384 --watch --enable-source-maps dist/main.js\"",
     "start": "node --enable-source-maps dist/main.js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tools/tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=1 --no-file-parallelism",
     "test:identity:integration": "vitest run src/identity/identity.integration.spec.ts",
     "test:asset:integration": "vitest run src/resource/asset-workflow.integration.spec.ts"
   },

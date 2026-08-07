@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { AlertTriangle, DatabaseZap, LoaderCircle, RefreshCw, RotateCcw } from '@lucide/vue';
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 
 import ModalDialog from '../components/ModalDialog.vue';
 import { apiRequest } from '../lib/api';
+import { authStore } from '../stores/auth';
 import { notify, notifyError } from '../stores/notifications';
 
 interface MaintenanceJob {
@@ -35,12 +36,15 @@ interface MaintenanceSummary {
 const jobs = ref<MaintenanceJob[]>([]);
 const summary = ref<MaintenanceSummary>({ jobs: {}, deletionBatches: {}, nextDueAt: null });
 const loading = ref(true);
+const loadError = ref('');
 const submitting = ref(false);
 const retryTarget = ref<MaintenanceJob | null>(null);
 const filters = reactive({ status: '', jobType: '' });
+const canManage = computed(() => authStore.hasPermission('maintenance.manage'));
 
 async function load(): Promise<void> {
   loading.value = true;
+  loadError.value = '';
   try {
     const query = new URLSearchParams({ limit: '100' });
     if (filters.status) query.set('status', filters.status);
@@ -53,6 +57,8 @@ async function load(): Promise<void> {
     jobs.value = page.items;
   } catch (error) {
     jobs.value = [];
+    summary.value = { jobs: {}, deletionBatches: {}, nextDueAt: null };
+    loadError.value = '维护任务暂时无法加载，请检查网络后重试';
     notifyError(error, '维护任务加载失败');
   } finally {
     loading.value = false;
@@ -60,7 +66,7 @@ async function load(): Promise<void> {
 }
 
 async function retry(): Promise<void> {
-  if (retryTarget.value === null) return;
+  if (retryTarget.value === null || !canManage.value) return;
   submitting.value = true;
   try {
     await apiRequest(`/api/v1/maintenance/jobs/${retryTarget.value.id}/retry`, { method: 'POST' });
@@ -121,7 +127,13 @@ onMounted(() => void load());
       <h1>维护任务</h1>
     </div>
     <div class="header-actions">
-      <button class="icon-button" type="button" title="刷新维护任务" @click="load">
+      <button
+        class="icon-button"
+        type="button"
+        title="刷新维护任务"
+        :disabled="loading"
+        @click="load"
+      >
         <RefreshCw :size="18" />
       </button>
     </div>
@@ -151,6 +163,7 @@ onMounted(() => void load());
         <option value="PENDING">等待执行</option>
         <option value="RUNNING">执行中</option>
         <option value="SUCCEEDED">已完成</option>
+        <option value="FAILED">失败</option>
         <option value="DEAD">终态失败</option>
         <option value="CANCELLED">已取消</option>
       </select>
@@ -167,12 +180,18 @@ onMounted(() => void load());
         <option value="PRUNE_COMPLETED_JOBS">清理历史任务</option>
       </select>
     </label>
-    <button class="primary-button compact" type="submit">筛选</button>
+    <button class="primary-button compact" type="submit" :disabled="loading">筛选</button>
   </form>
 
   <section class="page-section maintenance-section">
     <div v-if="loading" class="loading-state">
       <LoaderCircle class="spinning" :size="21" />加载维护任务
+    </div>
+    <div v-else-if="loadError" class="empty-state error-state" role="alert">
+      <AlertTriangle :size="27" /><strong>{{ loadError }}</strong>
+      <button class="secondary-button compact" type="button" @click="load">
+        <RefreshCw :size="15" />重新加载
+      </button>
     </div>
     <div v-else-if="jobs.length === 0" class="empty-state">
       <DatabaseZap :size="27" /><strong>没有匹配的维护任务</strong>
@@ -207,7 +226,7 @@ onMounted(() => void load());
         <span class="maintenance-error" data-label="错误">{{ job.errorMessage ?? '--' }}</span>
         <span class="row-actions">
           <button
-            v-if="job.status === 'DEAD'"
+            v-if="job.status === 'DEAD' && canManage"
             class="secondary-button compact"
             type="button"
             @click="retryTarget = job"

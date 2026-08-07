@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import process from 'node:process';
 
 import { ConfigService } from '@nestjs/config';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -17,6 +20,13 @@ import { UploadService } from './upload.service.js';
 
 const integrationEnabled = process.env['DAM_ASSET_INTEGRATION_TESTS'] === '1';
 const integration = integrationEnabled ? describe : describe.skip;
+
+if (integrationEnabled) {
+  const rootEnvPath = resolve(import.meta.dirname, '../../../../.env');
+  if (existsSync(rootEnvPath)) {
+    process.loadEnvFile(rootEnvPath);
+  }
+}
 
 integration('resource hierarchy and resumable asset workflow', () => {
   const prisma = new PrismaService();
@@ -112,6 +122,86 @@ integration('resource hierarchy and resumable asset workflow', () => {
       metadata,
     );
     const folder = await resources.createFolder(actor, space.id, { name: 'Contracts' }, metadata);
+
+    const nestedParent = await resources.createFolder(
+      actor,
+      space.id,
+      { name: 'Archive' },
+      metadata,
+    );
+    const nestedChild = await resources.createFolder(
+      actor,
+      space.id,
+      { name: 'Legacy', parentId: nestedParent.id },
+      metadata,
+    );
+    await resources.trash(
+      actor,
+      nestedChild.id,
+      { lockVersion: nestedChild.lockVersion },
+      metadata,
+    );
+    const childBatchId = (
+      await prisma.resourceNode.findUniqueOrThrow({
+        where: { id: nestedChild.id },
+        select: { deletionBatchId: true },
+      })
+    ).deletionBatchId!;
+    await resources.trash(
+      actor,
+      nestedParent.id,
+      { lockVersion: nestedParent.lockVersion },
+      metadata,
+    );
+    const mergedNodes = await prisma.resourceNode.findMany({
+      where: { id: { in: [nestedParent.id, nestedChild.id] } },
+      select: { id: true, deletionBatchId: true, lockVersion: true },
+    });
+    const mergedBatchIds = new Set(mergedNodes.map(({ deletionBatchId }) => deletionBatchId));
+    expect(mergedBatchIds.size).toBe(1);
+    expect(mergedBatchIds.has(childBatchId)).toBe(false);
+    expect(
+      await prisma.deletionBatch.findUniqueOrThrow({ where: { id: childBatchId } }),
+    ).toMatchObject({ status: 'SUPERSEDED' });
+    expect(
+      await prisma.maintenanceJob.count({
+        where: { targetId: childBatchId, status: 'CANCELLED' },
+      }),
+    ).toBe(3);
+
+    const mergedRoot = mergedNodes.find(({ id }) => id === nestedParent.id)!;
+    const purgeRequested = await resources.requestPurge(
+      actor,
+      nestedParent.id,
+      { lockVersion: mergedRoot.lockVersion, confirmationName: nestedParent.name },
+      metadata,
+    );
+    const immediatePurgeJob = await prisma.maintenanceJob.findFirstOrThrow({
+      where: {
+        targetId: mergedRoot.deletionBatchId,
+        jobType: 'PURGE_DELETION_BATCH',
+      },
+      select: { status: true, availableAt: true },
+    });
+    expect(immediatePurgeJob.status).toBe('PENDING');
+    expect(immediatePurgeJob.availableAt.getTime()).toBeLessThanOrEqual(
+      purgeRequested.purgeRequestedAt.getTime(),
+    );
+
+    await prisma.uploadSession.create({
+      data: {
+        spaceId: space.id,
+        targetNodeId: folder.id,
+        initiatedById: administrator.id,
+        uploadId: `expired-reservation-${suffix}`,
+        objectKey: `integration/expired-reservation/${suffix}`,
+        fileName: 'Expired reservation.bin',
+        sizeBytes: 60n * 1024n * 1024n,
+        mimeType: 'application/octet-stream',
+        status: 'UPLOADING',
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+    });
 
     const firstPayload = Buffer.alloc(9 * 1024 * 1024, 0x41);
     const firstChecksum = createHash('sha256').update(firstPayload).digest('hex');

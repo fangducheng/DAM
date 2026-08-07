@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsUUID, Matches, Max, Min } from 'class-validator';
 
 export class MaintenanceJobPageQueryDto {
   @IsOptional()
@@ -30,6 +30,19 @@ export class MaintenanceJobPageQueryDto {
   @IsOptional()
   @IsUUID()
   spaceId?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 50;
+}
+
+export class StorageReconciliationPageQueryDto {
+  @IsOptional()
+  @Matches(/^[a-f0-9]{64}$/)
+  cursor?: string;
 
   @IsOptional()
   @Transform(({ value }) => Number(value))

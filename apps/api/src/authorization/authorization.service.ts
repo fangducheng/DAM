@@ -1,7 +1,12 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { permissionCodes, type AuthenticatedUser, type PermissionCode } from '@dam/contracts';
+import {
+  permissionCodes,
+  type AuthenticatedUser,
+  type CurrentCapabilitiesResponse,
+  type PermissionCode,
+} from '@dam/contracts';
 import type { Prisma } from '@dam/database';
 
 import { ApiException } from '../common/errors/api.exception.js';
@@ -100,6 +105,26 @@ export class AuthorizationService {
         select: { spaceId: true },
       })) !== null
     );
+  }
+
+  async tenantCapabilities(actor: AuthenticatedUser): Promise<CurrentCapabilitiesResponse> {
+    const subject = await this.subject(actor);
+    const now = new Date();
+    const scope = { type: 'TENANT' as const, id: actor.tenantId };
+    const context: ScopeContext = { spaceId: null, ownerOrganizationId: null };
+    const granted = new Set(
+      subject.roleBindings
+        .filter(
+          (binding) =>
+            (binding.expiresAt === null || new Date(binding.expiresAt) > now) &&
+            this.bindingApplies(binding, scope, context),
+        )
+        .flatMap((binding) => binding.permissions),
+    );
+    return {
+      authorizationVersion: subject.authorizationVersion,
+      permissions: permissionCodes.filter((permission) => granted.has(permission)),
+    };
   }
 
   async evaluate(

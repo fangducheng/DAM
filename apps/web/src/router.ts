@@ -1,7 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router';
 
+import type { PermissionCode } from '@dam/contracts';
+
 import AppShell from './components/AppShell.vue';
 import { authStore } from './stores/auth';
+import { notify } from './stores/notifications';
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -38,7 +41,11 @@ export const router = createRouter({
         { path: 'permissions', component: () => import('./views/PermissionsView.vue') },
         { path: 'notifications', component: () => import('./views/NotificationsView.vue') },
         { path: 'audit', component: () => import('./views/AuditView.vue') },
-        { path: 'maintenance', component: () => import('./views/MaintenanceView.vue') },
+        {
+          path: 'maintenance',
+          component: () => import('./views/MaintenanceView.vue'),
+          meta: { permission: 'maintenance.read' satisfies PermissionCode },
+        },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/status' },
@@ -56,6 +63,11 @@ router.beforeEach(async (to) => {
   }
   if (authStore.state.status !== 'authenticated') {
     return { name: 'login', query: { redirect: to.fullPath } };
+  }
+  const requiredPermission = to.meta.permission as PermissionCode | undefined;
+  if (requiredPermission !== undefined && !authStore.hasPermission(requiredPermission)) {
+    notify('warning', '你无权访问该页面');
+    return '/status';
   }
   return true;
 });

@@ -692,6 +692,11 @@ h2 {
   flex-direction: column;
 }
 
+.empty-state.error-state {
+  color: var(--red);
+  text-align: center;
+}
+
 .master-pane > .empty-state {
   min-height: 220px;
 }
@@ -1840,10 +1845,14 @@ h2 {
   .primary-nav {
     display: grid;
     height: 64px;
-    grid-template-columns: repeat(9, minmax(48px, 1fr));
+    grid-auto-columns: minmax(56px, 1fr);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    grid-template-rows: 64px;
     gap: 0;
     margin: 0;
     overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .nav-item {

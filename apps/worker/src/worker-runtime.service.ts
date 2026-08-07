@@ -147,7 +147,6 @@ export class WorkerRuntimeService implements OnModuleInit, OnModuleDestroy {
       };
       this.resolveWait = finish;
       this.waitTimer = setTimeout(finish, this.pollIntervalMs);
-      this.waitTimer.unref();
     });
   }
 

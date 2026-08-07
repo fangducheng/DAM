@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "tsc -p tsconfig.build.json && concurrently -k -n tsc,node \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --enable-source-maps dist/main.js\"",
+    "dev": "node --max-old-space-size=384 --enable-source-maps dist/main.js",
+    "dev:watch": "concurrently -k -n tsc,node \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --max-old-space-size=384 --watch --enable-source-maps dist/main.js\"",
     "start": "node --enable-source-maps dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --maxWorkers=1 --no-file-parallelism"
   },
   "dependencies": {
     "@dam/config": "workspace:*",

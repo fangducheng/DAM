@@ -48,6 +48,11 @@ export const permissionCodes = [
 
 export type PermissionCode = (typeof permissionCodes)[number];
 
+export interface CurrentCapabilitiesResponse {
+  authorizationVersion: string;
+  permissions: PermissionCode[];
+}
+
 export const systemRoleCodes = [
   'platform_admin',
   'platform_auditor',

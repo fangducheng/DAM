@@ -99,6 +99,19 @@ integration('identity lifecycle integration', () => {
     actorId = actor.id;
   });
 
+  it('returns effective Tenant capabilities in the shared permission order', async () => {
+    const capabilities = await authorization.tenantCapabilities({
+      userId: actorId,
+      tenantId,
+      sessionId: randomUUID(),
+      authenticationMethods: ['password', 'totp'],
+    });
+
+    expect(capabilities.authorizationVersion).toBeTruthy();
+    expect(capabilities.permissions).toContain('maintenance.read');
+    expect(capabilities.permissions).toContain('maintenance.manage');
+  });
+
   it('accepts an admin invitation and revokes the token family on refresh replay', async () => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
     const actor = {

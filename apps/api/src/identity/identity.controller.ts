@@ -19,6 +19,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import type { AuthenticatedUser } from '@dam/contracts';
 
+import { AuthorizationService } from '../authorization/authorization.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { AccessTokenGuard } from './auth/access-token.guard.js';
 import { CurrentUser } from './auth/current-user.decorator.js';
@@ -62,6 +63,7 @@ export class IdentityController {
   constructor(
     private readonly identity: IdentityService,
     private readonly invitations: InvitationService,
+    private readonly authorization: AuthorizationService,
     config: ConfigService,
   ) {
     this.cookieName = config.getOrThrow<string>('REFRESH_COOKIE_NAME');
@@ -116,6 +118,14 @@ export class IdentityController {
     }
     const result = await this.identity.refresh(refreshToken, this.metadata(request));
     return this.respondWithSession(reply, result);
+  }
+
+  @Get('capabilities')
+  @UseGuards(AccessTokenGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Read effective Tenant capabilities for the current user' })
+  capabilities(@CurrentUser() user: AuthenticatedUser) {
+    return this.authorization.tenantCapabilities(user);
   }
 
   @Post('logout')

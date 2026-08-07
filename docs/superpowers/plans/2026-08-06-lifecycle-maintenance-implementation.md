@@ -6,7 +6,7 @@ Deliver local-first recycle-bin retention, irreversible deletion, expired-upload
 object deletion, metadata pruning, and administrator maintenance visibility without requiring
 ClamAV, Tika, RabbitMQ, or production infrastructure.
 
-Status: in progress.
+Status: completed on 2026-08-07.
 
 ## Work items
 
@@ -31,7 +31,8 @@ Status: in progress.
    quota release, object cleanup retry, upload expiry, retention, authorization, and tenant isolation
    with disposable PostgreSQL and MinIO integration tests.
 10. Run Prisma validation and generation, focused tests, desktop/mobile Playwright verification, and
-    root `pnpm verify`; record the completed status and synchronize both configured remotes.
+    the root quality gates; record the completed status and synchronize the local personal remote.
+    GitHub synchronization remains an explicit user action.
 
 ## Delivery checkpoints
 

@@ -24,6 +24,10 @@ docker compose --profile processing up -d clamav
 
 Do not run the processing and observability profiles together on this workstation.
 
+The root scripts are tuned for this 8 GB workstation. `build`, `typecheck`, and `test` run Turbo
+with one task at a time; the installed Turbo version no longer starts a background daemon. API and
+Worker development processes have a 384 MB Node.js old-space limit, while Vite has a 512 MB limit.
+
 ## First start
 
 ```powershell
@@ -35,6 +39,21 @@ pnpm --filter @dam/database seed
 pnpm identity:bootstrap
 pnpm dev
 ```
+
+`pnpm dev` is the default low-memory profile. It serially builds the shared packages, API, and
+Worker without performing an unnecessary Web production build, then runs only three long-lived
+processes: the compiled API, the compiled lightweight Worker, and Vite. Backend source changes are
+not rebuilt automatically in this profile; stop the command and run `pnpm dev` again.
+
+Backend hot reload is explicitly opt-in:
+
+```powershell
+pnpm dev:watch
+```
+
+This starts TypeScript and Node watchers for both backend applications in addition to Vite. It is
+materially heavier and should be used only for a focused editing session. Return to `pnpm dev`
+afterward.
 
 `identity:bootstrap` idempotently creates the local Tenant, first organization, and administrator.
 For an inactive administrator it prints a one-time invitation URL. Complete that invitation to
@@ -63,8 +82,9 @@ must remain quarantined for a processing worker.
 ## Asset processing modes
 
 The default local profile keeps `PROCESSING_WORKER_ENABLED=false`, `CLAMAV_ENABLED=false`, and
-`ASSET_PROCESSING_MODE=local-bypass`. Start the API and Web console with `pnpm dev`; a separate
-worker is unnecessary in this mode.
+`ASSET_PROCESSING_MODE=local-bypass`. Start the API, Web console, and lightweight maintenance
+Worker with `pnpm dev`. Processing jobs stay disabled in this mode, but lifecycle maintenance still
+runs in the Worker.
 
 To exercise fail-closed processing locally, start ClamAV and change the matching values in `.env`:
 
@@ -79,11 +99,14 @@ CLAMAV_ENABLED=true
 CLAMAV_HOST=127.0.0.1
 ```
 
-Restart the API after changing the mode, then run the worker in a second terminal:
+Restart `pnpm dev` after changing the mode. To run only the Worker for focused diagnosis, use a
+second terminal:
 
 ```powershell
 pnpm dev:worker
 ```
+
+Use `pnpm dev:worker:watch` only when Worker source hot reload is required.
 
 The worker reads source objects as streams and uses PostgreSQL `processing_jobs` as its local
 reliable queue. A file remains quarantined until ClamAV explicitly returns `CLEAN`. Timeouts,
@@ -103,6 +126,21 @@ make an already clean source unavailable.
   running. The job is retried with exponential backoff and preserves its terminal error for
   administrator diagnosis.
 - Never reuse `.env.example` credentials outside the local workstation.
+
+## Low-memory verification
+
+Stop `pnpm dev` or `pnpm dev:watch` before running build, type checking, tests, or browser checks.
+Run heavy commands sequentially, never in parallel:
+
+```powershell
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+Do not keep Playwright or a browser verification process running while these commands execute. Stop
+optional Docker profiles first if Windows is already under memory pressure. Vitest is configured to
+use one worker and disables file-level parallelism in every workspace package.
 
 ## Shutdown
 

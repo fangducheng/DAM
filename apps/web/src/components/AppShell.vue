@@ -13,7 +13,8 @@ import {
   UsersRound,
   Wrench,
 } from '@lucide/vue';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import type { PermissionCode } from '@dam/contracts';
+import { computed, onBeforeUnmount, onMounted, ref, type Component } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 
 import { authStore } from '../stores/auth';
@@ -23,7 +24,12 @@ const route = useRoute();
 const router = useRouter();
 const viewRevision = ref(0);
 
-const navigation = [
+const allNavigation: Array<{
+  to: string;
+  label: string;
+  icon: Component;
+  permission?: PermissionCode;
+}> = [
   { to: '/status', label: '系统状态', icon: Server },
   { to: '/organizations', label: '组织与成员', icon: Building2 },
   { to: '/groups', label: '共享群组', icon: UsersRound },
@@ -32,12 +38,17 @@ const navigation = [
   { to: '/permissions', label: '目录权限', icon: KeyRound },
   { to: '/notifications', label: '通知', icon: Bell },
   { to: '/audit', label: '审计日志', icon: ScrollText },
-  { to: '/maintenance', label: '维护任务', icon: Wrench },
+  { to: '/maintenance', label: '维护任务', icon: Wrench, permission: 'maintenance.read' },
   { to: '/sessions', label: '登录会话', icon: ShieldCheck },
 ];
+const navigation = computed(() =>
+  allNavigation.filter(
+    (item) => item.permission === undefined || authStore.hasPermission(item.permission),
+  ),
+);
 
 const currentTitle = computed(
-  () => navigation.find((item) => route.path.startsWith(item.to))?.label ?? '数字资产中心',
+  () => navigation.value.find((item) => route.path.startsWith(item.to))?.label ?? '数字资产中心',
 );
 
 async function logout(): Promise<void> {
