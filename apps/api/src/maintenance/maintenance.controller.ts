@@ -1,4 +1,16 @@
-import { Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 
@@ -10,8 +22,10 @@ import { requestMetadata } from '../common/http/request-metadata.js';
 import { AccessTokenGuard } from '../identity/auth/access-token.guard.js';
 import { CurrentUser } from '../identity/auth/current-user.decorator.js';
 import {
+  CreateStorageReconciliationRunDto,
   MaintenanceJobPageQueryDto,
-  StorageReconciliationPageQueryDto,
+  StorageReconciliationIssuePageQueryDto,
+  StorageReconciliationRunPageQueryDto,
 } from './dto/maintenance.dto.js';
 import { MaintenanceService } from './maintenance.service.js';
 import { StorageReconciliationService } from './storage-reconciliation.service.js';
@@ -39,14 +53,44 @@ export class MaintenanceController {
     return this.maintenance.list(actor, query);
   }
 
-  @Get('storage-reconciliation')
-  @ApiOperation({ summary: 'Generate a safe Tenant object-storage reconciliation report' })
-  reconcileStorage(
+  @Post('storage-reconciliation/runs')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RequirePermission('maintenance.manage', 'TENANT')
+  @ApiOperation({ summary: 'Queue a Tenant object-storage reconciliation run' })
+  createReconciliationRun(
     @CurrentUser() actor: AuthenticatedUser,
-    @Query() query: StorageReconciliationPageQueryDto,
+    @Body() input: CreateStorageReconciliationRunDto,
     @Req() request: FastifyRequest,
   ) {
-    return this.reconciliation.report(actor, query, requestMetadata(request));
+    return this.reconciliation.createRun(actor, input, requestMetadata(request));
+  }
+
+  @Get('storage-reconciliation/runs')
+  @ApiOperation({ summary: 'List Tenant object-storage reconciliation runs' })
+  listReconciliationRuns(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Query() query: StorageReconciliationRunPageQueryDto,
+  ) {
+    return this.reconciliation.listRuns(actor, query);
+  }
+
+  @Get('storage-reconciliation/runs/:runId')
+  @ApiOperation({ summary: 'Read one Tenant object-storage reconciliation run' })
+  getReconciliationRun(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('runId', ParseUUIDPipe) runId: string,
+  ) {
+    return this.reconciliation.getRun(actor, runId);
+  }
+
+  @Get('storage-reconciliation/runs/:runId/issues')
+  @ApiOperation({ summary: 'List a successful reconciliation run issue snapshot' })
+  listReconciliationIssues(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('runId', ParseUUIDPipe) runId: string,
+    @Query() query: StorageReconciliationIssuePageQueryDto,
+  ) {
+    return this.reconciliation.listIssues(actor, runId, query);
   }
 
   @Post('jobs/:jobId/retry')

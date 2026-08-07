@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import {
   AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
   DatabaseZap,
-  HardDrive,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
@@ -13,6 +10,7 @@ import {
 import { computed, onMounted, reactive, ref } from 'vue';
 
 import ModalDialog from '../components/ModalDialog.vue';
+import StorageReconciliationPanel from '../components/StorageReconciliationPanel.vue';
 import { apiRequest } from '../lib/api';
 import { authStore } from '../stores/auth';
 import { notify, notifyError } from '../stores/notifications';
@@ -43,42 +41,7 @@ interface MaintenanceSummary {
   nextDueAt: string | null;
 }
 
-interface ReconciliationSummary {
-  databaseObjects: number;
-  storageObjects: number;
-  missingObjects: number;
-  unknownObjects: number;
-}
-
-type ReconciliationIssue =
-  | {
-      id: string;
-      issueType: 'DATABASE_OBJECT_MISSING';
-      storageObjectId: string;
-      expectedSizeBytes: string;
-      databaseCreatedAt: string;
-    }
-  | {
-      id: string;
-      issueType: 'STORAGE_OBJECT_UNKNOWN';
-      objectFingerprint: string;
-      observedSizeBytes: string;
-      lastModifiedAt: string;
-    };
-
-interface ReconciliationReport {
-  generatedAt: string;
-  summary: ReconciliationSummary;
-  items: ReconciliationIssue[];
-  nextCursor: string | null;
-}
-
 type MaintenanceMode = 'jobs' | 'reconciliation';
-
-interface ReconciliationNavigation {
-  cursor: string | null;
-  history: Array<string | null>;
-}
 
 const jobs = ref<MaintenanceJob[]>([]);
 const summary = ref<MaintenanceSummary>({ jobs: {}, deletionBatches: {}, nextDueAt: null });
@@ -89,12 +52,6 @@ const retryTarget = ref<MaintenanceJob | null>(null);
 const filters = reactive({ status: '', jobType: '' });
 const canManage = computed(() => authStore.hasPermission('maintenance.manage'));
 const activeMode = ref<MaintenanceMode>('jobs');
-const reconciliation = ref<ReconciliationReport | null>(null);
-const reconciliationLoading = ref(false);
-const reconciliationError = ref('');
-const reconciliationCursor = ref<string | null>(null);
-const reconciliationCursorHistory = ref<Array<string | null>>([]);
-const reconciliationRetryTarget = ref<ReconciliationNavigation | null>(null);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -134,71 +91,8 @@ async function retry(): Promise<void> {
   }
 }
 
-async function selectMode(mode: MaintenanceMode): Promise<void> {
+function selectMode(mode: MaintenanceMode): void {
   activeMode.value = mode;
-  if (mode === 'reconciliation' && reconciliation.value === null && !reconciliationLoading.value) {
-    await loadReconciliation({ cursor: null, history: [] });
-  }
-}
-
-async function refreshCurrent(): Promise<void> {
-  if (activeMode.value === 'jobs') {
-    await load();
-    return;
-  }
-  await loadReconciliation({ cursor: null, history: [] });
-}
-
-async function loadReconciliation(target?: ReconciliationNavigation): Promise<void> {
-  const navigation = target ?? {
-    cursor: reconciliationCursor.value,
-    history: [...reconciliationCursorHistory.value],
-  };
-  reconciliationLoading.value = true;
-  reconciliationError.value = '';
-  reconciliationRetryTarget.value = null;
-  try {
-    const query = new URLSearchParams({ limit: '50' });
-    if (navigation.cursor !== null) {
-      query.set('cursor', navigation.cursor);
-    }
-    const report = await apiRequest<ReconciliationReport>(
-      `/api/v1/maintenance/storage-reconciliation?${query.toString()}`,
-    );
-    reconciliation.value = report;
-    reconciliationCursor.value = navigation.cursor;
-    reconciliationCursorHistory.value = [...navigation.history];
-  } catch (error) {
-    reconciliationError.value = '存储对账报告暂时无法生成，请检查对象存储后重试';
-    reconciliationRetryTarget.value = navigation;
-    notifyError(error, '存储对账失败');
-  } finally {
-    reconciliationLoading.value = false;
-  }
-}
-
-async function retryReconciliation(): Promise<void> {
-  if (reconciliationRetryTarget.value === null || reconciliationLoading.value) return;
-  await loadReconciliation(reconciliationRetryTarget.value);
-}
-
-async function nextReconciliationPage(): Promise<void> {
-  const nextCursor = reconciliation.value?.nextCursor;
-  if (nextCursor === null || nextCursor === undefined || reconciliationLoading.value) return;
-  await loadReconciliation({
-    cursor: nextCursor,
-    history: [...reconciliationCursorHistory.value, reconciliationCursor.value],
-  });
-}
-
-async function previousReconciliationPage(): Promise<void> {
-  if (reconciliationCursorHistory.value.length === 0 || reconciliationLoading.value) return;
-  const previousCursor =
-    reconciliationCursorHistory.value[reconciliationCursorHistory.value.length - 1] ?? null;
-  await loadReconciliation({
-    cursor: previousCursor,
-    history: reconciliationCursorHistory.value.slice(0, -1),
-  });
 }
 
 function count(status: string): number {
@@ -209,41 +103,6 @@ function formatTime(value: string | null): string {
   if (value === null) return '--';
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'medium' }).format(
     new Date(value),
-  );
-}
-
-function formatBytes(value: string): string {
-  const bytes = Number(value);
-  if (!Number.isFinite(bytes) || bytes < 0) return `${value} B`;
-  if (bytes < 1024) return `${bytes.toLocaleString('zh-CN')} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let amount = bytes;
-  let unit = 'B';
-  for (const candidate of units) {
-    amount /= 1024;
-    unit = candidate;
-    if (amount < 1024) break;
-  }
-  return `${amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ${unit}`;
-}
-
-function issueIdentifier(issue: ReconciliationIssue): string {
-  return issue.issueType === 'DATABASE_OBJECT_MISSING'
-    ? issue.storageObjectId
-    : issue.objectFingerprint;
-}
-
-function issueSize(issue: ReconciliationIssue): string {
-  return formatBytes(
-    issue.issueType === 'DATABASE_OBJECT_MISSING'
-      ? issue.expectedSizeBytes
-      : issue.observedSizeBytes,
-  );
-}
-
-function issueTime(issue: ReconciliationIssue): string {
-  return formatTime(
-    issue.issueType === 'DATABASE_OBJECT_MISSING' ? issue.databaseCreatedAt : issue.lastModifiedAt,
   );
 }
 
@@ -269,6 +128,7 @@ function jobLabel(type: string): string {
       DELETE_STORAGE_OBJECT: '删除存储对象',
       PRUNE_NOTIFICATIONS: '清理历史通知',
       PRUNE_COMPLETED_JOBS: '清理历史任务',
+      RECONCILE_STORAGE_STEP: '执行存储对账步骤',
     }[type] ?? type
   );
 }
@@ -284,11 +144,12 @@ onMounted(() => void load());
     </div>
     <div class="header-actions">
       <button
+        v-if="activeMode === 'jobs'"
         class="icon-button"
         type="button"
-        :title="activeMode === 'jobs' ? '刷新维护任务' : '重新生成存储对账报告'"
-        :disabled="loading || reconciliationLoading"
-        @click="refreshCurrent"
+        title="刷新维护任务"
+        :disabled="loading"
+        @click="load"
       >
         <RefreshCw :size="18" />
       </button>
@@ -354,6 +215,7 @@ onMounted(() => void load());
           <option value="RETENTION_WARNING">回收站到期提醒</option>
           <option value="PRUNE_NOTIFICATIONS">清理历史通知</option>
           <option value="PRUNE_COMPLETED_JOBS">清理历史任务</option>
+          <option value="RECONCILE_STORAGE_STEP">执行存储对账步骤</option>
         </select>
       </label>
       <button class="primary-button compact" type="submit" :disabled="loading">筛选</button>
@@ -415,119 +277,7 @@ onMounted(() => void load());
     </section>
   </template>
 
-  <template v-else>
-    <section
-      v-if="reconciliation !== null"
-      class="metric-grid maintenance-metrics reconciliation-metrics"
-      aria-label="存储对账摘要"
-    >
-      <article>
-        <small>数据库对象数</small><strong>{{ reconciliation.summary.databaseObjects }}</strong>
-      </article>
-      <article>
-        <small>存储对象数</small><strong>{{ reconciliation.summary.storageObjects }}</strong>
-      </article>
-      <article :class="{ 'metric-warning': reconciliation.summary.missingObjects > 0 }">
-        <small>数据库记录缺失对象</small
-        ><strong>{{ reconciliation.summary.missingObjects }}</strong>
-      </article>
-      <article :class="{ 'metric-warning': reconciliation.summary.unknownObjects > 0 }">
-        <small>存储中未知对象</small><strong>{{ reconciliation.summary.unknownObjects }}</strong>
-      </article>
-    </section>
-
-    <div v-if="reconciliation !== null" class="reconciliation-meta">
-      <span>报告生成于 {{ formatTime(reconciliation.generatedAt) }}</span>
-      <span>未知对象仅报告，不会自动删除</span>
-    </div>
-
-    <section class="page-section maintenance-section reconciliation-section">
-      <div v-if="reconciliationLoading && reconciliation === null" class="loading-state">
-        <LoaderCircle class="spinning" :size="21" />正在核对数据库与对象存储
-      </div>
-      <div
-        v-else-if="reconciliationError && reconciliation === null"
-        class="empty-state error-state"
-        role="alert"
-      >
-        <AlertTriangle :size="27" /><strong>{{ reconciliationError }}</strong>
-        <button class="secondary-button compact" type="button" @click="retryReconciliation">
-          <RefreshCw :size="15" />重新生成
-        </button>
-      </div>
-      <template v-else-if="reconciliation !== null">
-        <div
-          v-if="reconciliationError"
-          class="status-strip degraded reconciliation-inline-error"
-          role="alert"
-        >
-          <AlertTriangle :size="21" />
-          <div>
-            <strong>{{ reconciliationError }}</strong>
-            <span>当前页内容已保留，可重试请求或重新生成报告。</span>
-          </div>
-          <button class="secondary-button compact" type="button" @click="retryReconciliation">
-            <RefreshCw :size="15" />重试请求
-          </button>
-        </div>
-        <div v-if="reconciliationLoading" class="reconciliation-progress" aria-live="polite">
-          <LoaderCircle class="spinning" :size="16" />正在加载目标页
-        </div>
-        <div class="data-table reconciliation-table">
-          <div v-if="reconciliation.items.length === 0" class="empty-state">
-            <HardDrive :size="27" /><strong>未发现存储差异</strong>
-          </div>
-          <template v-else>
-            <div class="table-row table-header">
-              <span>差异类型</span><span>安全标识</span><span>对象大小</span><span>记录时间</span>
-            </div>
-            <div v-for="issue in reconciliation.items" :key="issue.id" class="table-row">
-              <span>
-                <span
-                  class="status-badge disabled"
-                  :class="{ unknown: issue.issueType === 'STORAGE_OBJECT_UNKNOWN' }"
-                  >{{
-                    issue.issueType === 'DATABASE_OBJECT_MISSING'
-                      ? '数据库对象缺失'
-                      : '未知存储对象'
-                  }}</span
-                >
-              </span>
-              <span class="reconciliation-identifier" data-label="安全标识">
-                <small>{{
-                  issue.issueType === 'DATABASE_OBJECT_MISSING' ? '数据库对象 UUID' : '未知对象指纹'
-                }}</small>
-                <code>{{ issueIdentifier(issue) }}</code>
-              </span>
-              <span data-label="对象大小">{{ issueSize(issue) }}</span>
-              <span data-label="记录时间">{{ issueTime(issue) }}</span>
-            </div>
-          </template>
-          <footer class="reconciliation-pagination" aria-label="存储对账分页">
-            <span>第 {{ reconciliationCursorHistory.length + 1 }} 页</span>
-            <div>
-              <button
-                class="secondary-button compact"
-                type="button"
-                :disabled="reconciliationCursorHistory.length === 0 || reconciliationLoading"
-                @click="previousReconciliationPage"
-              >
-                <ChevronLeft :size="15" />上一页
-              </button>
-              <button
-                class="secondary-button compact"
-                type="button"
-                :disabled="reconciliation.nextCursor === null || reconciliationLoading"
-                @click="nextReconciliationPage"
-              >
-                下一页<ChevronRight :size="15" />
-              </button>
-            </div>
-          </footer>
-        </div>
-      </template>
-    </section>
-  </template>
+  <StorageReconciliationPanel v-else :can-manage="canManage" />
 
   <ModalDialog v-if="retryTarget" title="重试维护任务" @close="retryTarget = null">
     <div class="confirm-content">

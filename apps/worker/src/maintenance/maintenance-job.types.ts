@@ -2,6 +2,7 @@ import type { MaintenanceJobType, Prisma } from '@dam/database';
 
 export interface ClaimedMaintenanceJob {
   id: string;
+  idempotencyKey: string;
   tenantId: string | null;
   spaceId: string | null;
   jobType: MaintenanceJobType;

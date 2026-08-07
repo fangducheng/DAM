@@ -13,6 +13,7 @@ import { assertLocalIntegrationRunner } from '../testing/integration-test.guard.
 import type { ClaimedMaintenanceJob } from './maintenance-job.types.js';
 import { MaintenanceProcessorService } from './maintenance-processor.service.js';
 import { MaintenanceQueueService } from './maintenance-queue.service.js';
+import type { StorageReconciliationProcessorService } from './storage-reconciliation-processor.service.js';
 
 const integrationEnabled = process.env['DAM_LIFECYCLE_INTEGRATION_TESTS'] === '1';
 assertLocalIntegrationRunner(integrationEnabled);
@@ -48,7 +49,12 @@ integration('lifecycle maintenance', () => {
     COMPLETED_JOB_RETENTION_DAYS: 30,
   });
   const storage = new ObjectStorageService(config);
-  const processor = new MaintenanceProcessorService(prisma, storage, config);
+  const processor = new MaintenanceProcessorService(
+    prisma,
+    storage,
+    config,
+    {} as StorageReconciliationProcessorService,
+  );
   const objectKeys = new Set<string>();
 
   afterAll(async () => {
@@ -885,6 +891,7 @@ function runningJob(
 function claimed(
   job: {
     id: string;
+    idempotencyKey: string;
     tenantId: string | null;
     spaceId: string | null;
     jobType: ClaimedMaintenanceJob['jobType'];

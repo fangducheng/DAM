@@ -56,7 +56,8 @@ persisted rows and never initiate storage I/O.
 - `checkpointVersion`: monotonically increasing integer used to reject stale jobs.
 - `databaseCursor`: internal UUID cursor for the next database checkpoint.
 - `storageCursor`: internal MinIO `startAfter` cursor. It is never selected by API response queries,
-  logs, notifications, or audit events and is cleared when a run reaches a terminal state.
+  logs, notifications, or audit events. Both cursors are cleared after successful completion, but a
+  failed run retains them internally so its terminal maintenance job can resume the same checkpoint.
 - `cutoffAt`: run observation cutoff. Database rows created after it and MinIO objects modified after
   it are not included in counts or findings.
 - `databaseObjects`, `storageObjects`, `missingObjects`, `unknownObjects`: accumulated counters.

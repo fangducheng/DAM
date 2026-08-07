@@ -539,77 +539,183 @@ function withoutExpectedResponses(actual, expected) {
 }
 
 /**
- * Verifies safe reconciliation rendering, opaque cursor pagination, empty state, and retry.
+ * Verifies persisted run history, polling, safe issue rendering, pagination retry, and rechecks.
  * @param {import('playwright-core').Page} page
  * @param {string} outputDirectory
  * @param {Array<{ status: number; url: string }>} expectedFailures
  */
 async function verifyStorageReconciliation(page, outputDirectory, expectedFailures) {
-  const routePattern = '**/api/v1/maintenance/storage-reconciliation?*';
+  const routePattern = '**/api/v1/maintenance/storage-reconciliation/runs**';
+  const runsPath = '/api/v1/maintenance/storage-reconciliation/runs';
+  const issueRunId = '90000000-0000-7000-8000-000000000009';
+  const failedRunId = '80000000-0000-7000-8000-000000000008';
+  const cleanRunId = '70000000-0000-7000-8000-000000000007';
+  const startedRunId = 'a0000000-0000-7000-8000-000000000010';
+  const recheckRunId = 'b0000000-0000-7000-8000-000000000011';
   const nextCursor = 'a'.repeat(64);
   const missingObjectId = '10000000-0000-4000-8000-000000000001';
   const unknownFingerprint = 'b'.repeat(64);
   const hiddenBucket = 'dam-internal-secret-bucket';
   const hiddenObjectKey = 'tenants/secret/object-key-that-must-not-render';
   const now = new Date().toISOString();
-  let delayedResponse = true;
-  let failNext = false;
-  let emptyNext = false;
+  const requestedBy = { id: '60000000-0000-4000-8000-000000000006', displayName: '验收管理员' };
+  const createRun = (overrides = {}) => ({
+    id: issueRunId,
+    sourceRunId: null,
+    requestedBy,
+    status: 'SUCCEEDED',
+    phase: 'COMPLETE',
+    databaseObjects: 12,
+    storageObjects: 13,
+    missingObjects: 1,
+    unknownObjects: 1,
+    cutoffAt: now,
+    lastCheckpointAt: now,
+    startedAt: now,
+    completedAt: now,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  const issueRun = createRun();
+  const failedRun = createRun({
+    id: failedRunId,
+    status: 'FAILED',
+    phase: 'STORAGE_SCAN',
+    storageObjects: 5,
+    missingObjects: 0,
+    unknownObjects: 0,
+    completedAt: now,
+    errorCode: 'STORAGE_UNAVAILABLE',
+    errorMessage: '对象存储暂时不可用',
+  });
+  const cleanRun = createRun({
+    id: cleanRunId,
+    databaseObjects: 12,
+    storageObjects: 12,
+    missingObjects: 0,
+    unknownObjects: 0,
+  });
+  const startedQueuedRun = createRun({
+    id: startedRunId,
+    status: 'QUEUED',
+    phase: 'DATABASE_SCAN',
+    databaseObjects: 0,
+    storageObjects: 0,
+    missingObjects: 0,
+    unknownObjects: 0,
+    lastCheckpointAt: null,
+    startedAt: null,
+    completedAt: null,
+  });
+  const startedRunningRun = createRun({
+    ...startedQueuedRun,
+    status: 'RUNNING',
+    phase: 'STORAGE_SCAN',
+    databaseObjects: 12,
+    storageObjects: 5,
+    lastCheckpointAt: now,
+    startedAt: now,
+  });
+  const startedSucceededRun = createRun({
+    ...startedQueuedRun,
+    status: 'SUCCEEDED',
+    phase: 'COMPLETE',
+    databaseObjects: 12,
+    storageObjects: 12,
+    lastCheckpointAt: now,
+    startedAt: now,
+    completedAt: now,
+  });
+  const recheckQueuedRun = createRun({
+    ...startedQueuedRun,
+    id: recheckRunId,
+    sourceRunId: cleanRunId,
+  });
+  let startRequests = 0;
+  let recheckRequests = 0;
+  let recheckSourceRunId = null;
+  let runListRequests = 0;
+  let startedDetailRequests = 0;
+  let nextPageRequests = 0;
   let nextPageObserved = false;
 
   await page.route(routePattern, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (request.method() !== 'GET') {
-      await route.fallback();
-      return;
-    }
-    const cursor = url.searchParams.get('cursor');
-    nextPageObserved ||= cursor === nextCursor;
-    if (failNext) {
-      failNext = false;
-      expectedFailures.push({ status: 503, url: request.url() });
-      await route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          code: 'INTERNAL_ERROR',
-          message: '对象存储暂时不可用，无法生成对账报告',
-          requestId: 'ui-expected-reconciliation-failure',
-        }),
-      });
-      return;
-    }
-    if (delayedResponse) {
-      delayedResponse = false;
-      await new Promise((resolve) => setTimeout(resolve, 180));
-    }
-    if (emptyNext) {
-      emptyNext = false;
+
+    if (url.pathname === runsPath && request.method() === 'GET') {
+      runListRequests += 1;
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          generatedAt: now,
-          summary: {
-            databaseObjects: 12,
-            storageObjects: 12,
-            missingObjects: 0,
-            unknownObjects: 0,
-          },
-          items: [],
+          items: runListRequests === 1 ? [] : [issueRun, failedRun, cleanRun],
           nextCursor: null,
         }),
       });
       return;
     }
-    const onNextPage = cursor === nextCursor;
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        generatedAt: now,
-        summary: { databaseObjects: 12, storageObjects: 13, missingObjects: 1, unknownObjects: 1 },
-        items: onNextPage
-          ? [
+
+    if (url.pathname === runsPath && request.method() === 'POST') {
+      /** @type {unknown} */
+      const body = JSON.parse(request.postData() ?? '{}');
+      if (!isRecord(body)) throw new Error('Reconciliation POST body was not an object');
+      if (body.sourceRunId === undefined) {
+        startRequests += 1;
+        if (Object.keys(body).length !== 0) {
+          throw new Error('Initial reconciliation POST did not send an empty object');
+        }
+        await route.fulfill({
+          status: 202,
+          contentType: 'application/json',
+          body: JSON.stringify(startedQueuedRun),
+        });
+        return;
+      }
+      if (typeof body.sourceRunId !== 'string') {
+        throw new Error('Reconciliation sourceRunId was not a string');
+      }
+      recheckRequests += 1;
+      recheckSourceRunId = body.sourceRunId;
+      await route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify(recheckQueuedRun),
+      });
+      return;
+    }
+
+    const issueMatch = url.pathname.match(
+      /^\/api\/v1\/maintenance\/storage-reconciliation\/runs\/([^/]+)\/issues$/,
+    );
+    if (request.method() === 'GET' && issueMatch !== null) {
+      const runId = issueMatch[1];
+      const cursor = url.searchParams.get('cursor');
+      if (runId === issueRunId && cursor === nextCursor) {
+        nextPageObserved = true;
+        nextPageRequests += 1;
+        if (nextPageRequests === 1) {
+          expectedFailures.push({ status: 503, url: request.url() });
+          await route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              code: 'INTERNAL_ERROR',
+              message: '对象存储暂时不可用，无法读取对账结果',
+              requestId: 'ui-expected-reconciliation-failure',
+            }),
+          });
+          return;
+        }
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            runId,
+            generatedAt: now,
+            summary: issueRun,
+            items: [
               {
                 id: unknownFingerprint,
                 issueType: 'STORAGE_OBJECT_UNKNOWN',
@@ -619,41 +725,87 @@ async function verifyStorageReconciliation(page, outputDirectory, expectedFailur
                 bucket: hiddenBucket,
                 objectKey: hiddenObjectKey,
               },
-            ]
-          : [
-              {
-                id: '0'.repeat(64),
-                issueType: 'DATABASE_OBJECT_MISSING',
-                storageObjectId: missingObjectId,
-                expectedSizeBytes: '1048576',
-                databaseCreatedAt: now,
-                bucket: hiddenBucket,
-                objectKey: hiddenObjectKey,
-              },
             ],
-        nextCursor: onNextPage ? null : nextCursor,
-      }),
-    });
+            nextCursor: null,
+          }),
+        });
+        return;
+      }
+
+      const run =
+        runId === issueRunId ? issueRun : runId === cleanRunId ? cleanRun : startedSucceededRun;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runId,
+          generatedAt: now,
+          summary: run,
+          items:
+            runId === issueRunId
+              ? [
+                  {
+                    id: '0'.repeat(64),
+                    issueType: 'DATABASE_OBJECT_MISSING',
+                    storageObjectId: missingObjectId,
+                    expectedSizeBytes: '1048576',
+                    databaseCreatedAt: now,
+                    bucket: hiddenBucket,
+                    objectKey: hiddenObjectKey,
+                  },
+                ]
+              : [],
+          nextCursor: runId === issueRunId ? nextCursor : null,
+        }),
+      });
+      return;
+    }
+
+    const detailMatch = url.pathname.match(
+      /^\/api\/v1\/maintenance\/storage-reconciliation\/runs\/([^/]+)$/,
+    );
+    if (request.method() === 'GET' && detailMatch !== null) {
+      const runId = detailMatch[1];
+      let run = [issueRun, failedRun, cleanRun, recheckQueuedRun].find(
+        (candidate) => candidate.id === runId,
+      );
+      if (runId === startedRunId) {
+        startedDetailRequests += 1;
+        run = startedDetailRequests === 1 ? startedRunningRun : startedSucceededRun;
+      }
+      if (run === undefined) throw new Error(`Unexpected reconciliation run detail: ${runId}`);
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(run) });
+      return;
+    }
+
+    await route.fallback();
   });
 
   try {
     await page.getByRole('button', { name: '存储对账', exact: true }).click();
-    await page.getByText('正在核对数据库与对象存储', { exact: true }).waitFor();
-    await waitForView(page);
-    const summary = page.locator('[aria-label="存储对账摘要"]');
+    await page.getByText('尚无存储对账记录', { exact: true }).waitFor();
+    await page.getByTitle('刷新对账运行').click();
+    const history = page.getByLabel('存储对账运行历史');
+    const issueRunRow = history.getByRole('button').filter({ hasText: '运行 90000000' });
+    const failedRunRow = history.getByRole('button').filter({ hasText: '运行 80000000' });
+    const cleanRunRow = history.getByRole('button').filter({ hasText: '运行 70000000' });
+    await issueRunRow.waitFor();
+    await failedRunRow.waitFor();
+    await cleanRunRow.waitFor();
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
+
+    const summary = page.locator('[aria-label="选中存储对账运行摘要"]');
     for (const [label, value] of [
       ['数据库对象数', '12'],
       ['存储对象数', '13'],
       ['数据库记录缺失对象', '1'],
       ['存储中未知对象', '1'],
     ]) {
-      const metric = summary.locator('article').filter({ hasText: label });
+      const metric = summary.locator('div').filter({ hasText: label });
       await metric.waitFor();
       if ((await metric.locator('strong').textContent())?.trim() !== value) {
         throw new Error(`Reconciliation summary did not render ${label}: ${value}`);
       }
     }
-    await page.getByText(missingObjectId, { exact: true }).waitFor();
     if ((await page.getByText(nextCursor, { exact: true }).count()) !== 0) {
       throw new Error('Reconciliation cursor was rendered to the user');
     }
@@ -663,47 +815,58 @@ async function verifyStorageReconciliation(page, outputDirectory, expectedFailur
       }
     }
 
-    failNext = true;
+    await failedRunRow.click();
+    const failureDetail = page.locator('.reconciliation-failure-detail');
+    await failureDetail.getByText('对象存储暂时不可用', { exact: true }).waitFor();
+    await failureDetail.getByText('错误代码：STORAGE_UNAVAILABLE', { exact: true }).waitFor();
+    for (const secret of [hiddenBucket, hiddenObjectKey]) {
+      if ((await failureDetail.getByText(secret, { exact: true }).count()) !== 0) {
+        throw new Error('Failed reconciliation detail rendered storage credentials');
+      }
+    }
+    await issueRunRow.click();
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
+
     await page.getByRole('button', { name: '下一页', exact: true }).click();
     const errorState = page.locator('.reconciliation-inline-error[role="alert"]');
-    await errorState
-      .getByText('存储对账报告暂时无法生成，请检查对象存储后重试', { exact: true })
-      .waitFor();
+    await errorState.getByText('对账结果暂时无法加载，已保留当前页', { exact: true }).waitFor();
     await page.getByText(missingObjectId, { exact: true }).waitFor();
     await page.getByText('第 1 页', { exact: true }).waitFor();
     if ((await page.getByText(unknownFingerprint, { exact: true }).count()) !== 0) {
-      throw new Error('Failed reconciliation page replaced the current report');
+      throw new Error('Failed reconciliation page replaced the current issue snapshot');
     }
     if (!nextPageObserved) throw new Error('Opaque reconciliation cursor was not sent to the API');
 
-    await errorState.getByRole('button', { name: '重试请求', exact: true }).click();
+    await errorState.getByRole('button', { name: '重试', exact: true }).click();
     await page.getByText(unknownFingerprint, { exact: true }).waitFor();
     await page.getByText('第 2 页', { exact: true }).waitFor();
     await errorState.waitFor({ state: 'detached' });
-    await page.getByRole('button', { name: '上一页', exact: true }).click();
-    await page.getByText(missingObjectId, { exact: true }).waitFor();
-    await page.getByText('第 1 页', { exact: true }).waitFor();
-
-    emptyNext = true;
-    await page.getByRole('button', { name: '下一页', exact: true }).click();
-    await page.getByText('未发现存储差异', { exact: true }).waitFor();
-    await page.getByText('第 2 页', { exact: true }).waitFor();
-    const emptyPagePrevious = page.getByRole('button', { name: '上一页', exact: true });
-    if (await emptyPagePrevious.isDisabled()) {
-      throw new Error('Empty reconciliation page did not preserve previous-page navigation');
+    if (nextPageRequests !== 2) {
+      throw new Error('Failed reconciliation issue page was not retried exactly once');
     }
-    await emptyPagePrevious.click();
-    await page.getByText(missingObjectId, { exact: true }).waitFor();
-    await page.getByText('第 1 页', { exact: true }).waitFor();
 
-    emptyNext = true;
-    await page.getByTitle('重新生成存储对账报告').click();
-    await waitForView(page);
+    await page.getByRole('button', { name: '开始核对', exact: true }).click();
+    await page.getByRole('heading', { name: '正在核对', exact: true }).waitFor();
+    const startedRunRow = history.getByRole('button').filter({ hasText: '运行 a0000000' });
+    if ((await startedRunRow.getAttribute('aria-pressed')) !== 'true') {
+      throw new Error('New reconciliation run was not selected');
+    }
+    if (startRequests !== 1)
+      throw new Error('Initial reconciliation POST was not sent exactly once');
+    await page.getByText('核对完成，未发现存储差异', { exact: true }).waitFor({ timeout: 7_000 });
+    if (startedDetailRequests < 2) throw new Error('Active reconciliation run was not polled');
+
+    await cleanRunRow.click();
     await page.getByText('未发现存储差异', { exact: true }).waitFor();
-    await page.getByTitle('重新生成存储对账报告').click();
-    await waitForView(page);
-    await page.getByText(missingObjectId, { exact: true }).waitFor();
+    await page.getByRole('button', { name: '重新核对', exact: true }).click();
+    await page.getByRole('heading', { name: '等待执行', exact: true }).waitFor();
+    if (recheckRequests !== 1) throw new Error('Recheck POST was not sent exactly once');
+    if (recheckSourceRunId !== cleanRunId) {
+      throw new Error('Recheck POST did not include the selected sourceRunId');
+    }
 
+    await issueRunRow.click();
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
     const screenshot = join(outputDirectory, 'storage-reconciliation-desktop.png');
     await page.screenshot({ path: screenshot, fullPage: true });
     return { screenshot, overflow: await hasPageOverflow(page) };
@@ -717,30 +880,71 @@ async function verifyStorageReconciliation(page, outputDirectory, expectedFailur
  * @param {string} outputDirectory
  */
 async function verifyStorageReconciliationMobile(page, outputDirectory) {
-  const routePattern = '**/api/v1/maintenance/storage-reconciliation?*';
+  const routePattern = '**/api/v1/maintenance/storage-reconciliation/runs**';
+  const runsPath = '/api/v1/maintenance/storage-reconciliation/runs';
+  const runId = 'c0000000-0000-7000-8000-000000000012';
   const fingerprint = 'c'.repeat(64);
-  await page.route(routePattern, (route) =>
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        generatedAt: new Date().toISOString(),
-        summary: { databaseObjects: 27, storageObjects: 28, missingObjects: 0, unknownObjects: 1 },
-        items: [
-          {
-            id: fingerprint,
-            issueType: 'STORAGE_OBJECT_UNKNOWN',
-            objectFingerprint: fingerprint,
-            observedSizeBytes: '987654321',
-            lastModifiedAt: new Date().toISOString(),
-          },
-        ],
-        nextCursor: 'd'.repeat(64),
-      }),
-    }),
-  );
+  const now = new Date().toISOString();
+  const run = {
+    id: runId,
+    sourceRunId: null,
+    requestedBy: null,
+    status: 'SUCCEEDED',
+    phase: 'COMPLETE',
+    databaseObjects: 27,
+    storageObjects: 28,
+    missingObjects: 0,
+    unknownObjects: 1,
+    cutoffAt: now,
+    lastCheckpointAt: now,
+    startedAt: now,
+    completedAt: now,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await page.route(routePattern, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === 'GET' && url.pathname === runsPath) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [run], nextCursor: null }),
+      });
+      return;
+    }
+    if (request.method() === 'GET' && url.pathname === `${runsPath}/${runId}`) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(run) });
+      return;
+    }
+    if (request.method() === 'GET' && url.pathname === `${runsPath}/${runId}/issues`) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runId,
+          generatedAt: now,
+          summary: run,
+          items: [
+            {
+              id: fingerprint,
+              issueType: 'STORAGE_OBJECT_UNKNOWN',
+              objectFingerprint: fingerprint,
+              observedSizeBytes: '987654321',
+              lastModifiedAt: now,
+            },
+          ],
+          nextCursor: null,
+        }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
   try {
     await page.getByRole('button', { name: '存储对账', exact: true }).click();
-    await waitForView(page);
+    await page.getByLabel('存储对账运行历史').getByText('运行 c0000000', { exact: true }).waitFor();
     await page.getByText(fingerprint, { exact: true }).waitFor();
     const screenshot = join(outputDirectory, 'storage-reconciliation-mobile.png');
     await page.screenshot({ path: screenshot, fullPage: true });
@@ -855,7 +1059,27 @@ async function verifyMaintenanceVisibility(page, baseUrl) {
   const capabilitiesRoutePattern = '**/api/v1/identity/capabilities';
   const maintenanceRoutePattern = '**/api/v1/maintenance/**';
   const jobId = '00000000-0000-4000-8000-000000000002';
+  const reconciliationRunId = 'd0000000-0000-7000-8000-000000000013';
   const now = new Date().toISOString();
+  const reconciliationRun = {
+    id: reconciliationRunId,
+    sourceRunId: null,
+    requestedBy: null,
+    status: 'SUCCEEDED',
+    phase: 'COMPLETE',
+    databaseObjects: 3,
+    storageObjects: 3,
+    missingObjects: 0,
+    unknownObjects: 0,
+    cutoffAt: now,
+    lastCheckpointAt: now,
+    startedAt: now,
+    completedAt: now,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: now,
+    updatedAt: now,
+  };
   let permissions = ['maintenance.read'];
   /** @param {import('playwright-core').Route} route */
   const capabilitiesRouteHandler = (route) =>
@@ -899,6 +1123,44 @@ async function verifyMaintenanceVisibility(page, baseUrl) {
       });
       return;
     }
+    if (
+      request.method() === 'GET' &&
+      url.pathname.endsWith('/maintenance/storage-reconciliation/runs')
+    ) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [reconciliationRun], nextCursor: null }),
+      });
+      return;
+    }
+    if (
+      request.method() === 'GET' &&
+      url.pathname.endsWith(`/maintenance/storage-reconciliation/runs/${reconciliationRunId}`)
+    ) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify(reconciliationRun),
+      });
+      return;
+    }
+    if (
+      request.method() === 'GET' &&
+      url.pathname.endsWith(
+        `/maintenance/storage-reconciliation/runs/${reconciliationRunId}/issues`,
+      )
+    ) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          runId: reconciliationRunId,
+          generatedAt: now,
+          summary: reconciliationRun,
+          items: [],
+          nextCursor: null,
+        }),
+      });
+      return;
+    }
     await route.fallback();
   };
   await page.route(capabilitiesRoutePattern, capabilitiesRouteHandler);
@@ -914,6 +1176,14 @@ async function verifyMaintenanceVisibility(page, baseUrl) {
     }
     if ((await page.getByRole('button', { name: '重试', exact: true }).count()) !== 0) {
       throw new Error('Maintenance retry was visible without maintenance.manage');
+    }
+    await page.getByRole('button', { name: '存储对账', exact: true }).click();
+    await page.getByLabel('存储对账运行历史').getByText('运行 d0000000', { exact: true }).waitFor();
+    if ((await page.getByRole('button', { name: '开始核对', exact: true }).count()) !== 0) {
+      throw new Error('Reconciliation start was visible without maintenance.manage');
+    }
+    if ((await page.getByRole('button', { name: '重新核对', exact: true }).count()) !== 0) {
+      throw new Error('Reconciliation recheck was visible without maintenance.manage');
     }
 
     permissions = [];

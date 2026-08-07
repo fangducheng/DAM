@@ -6,7 +6,7 @@ Replace request-bound PostgreSQL and MinIO scans with durable Tenant-scoped runs
 checkpoints, immutable issue snapshots, and a responsive run-history interface. The production
 architecture targets servers with at least 16 GB of memory; only local verification is serialized.
 
-Status: in progress on 2026-08-07.
+Status: completed on 2026-08-07. All ten work items and acceptance checks passed locally.
 
 ## Work Items
 
@@ -33,7 +33,7 @@ Status: in progress on 2026-08-07.
    isolation, checkpoint recovery, lease loss, lifecycle classification, pagination, and redaction;
    update Playwright mocks and desktop/mobile acceptance scenarios.
 10. Apply migrations only with `migrate deploy`, run formatting, lint, Prisma validation, typechecks,
-    unit tests, builds, all eight local integration suites, and browser verification serially; then
+    unit tests, builds, all nine local integration suites, and browser verification serially; then
     update the Chinese DAM work report and synchronize both configured remotes.
 
 ## Parallel Boundaries

@@ -21,6 +21,7 @@ export const environmentSchema = z
     MINIO_ACCESS_KEY: z.string().min(3).default('dam_local_admin'),
     MINIO_SECRET_KEY: z.string().min(8).default('dam_local_password'),
     MINIO_BUCKET: z.string().min(3).default('dam-assets'),
+    MINIO_OPERATION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(900_000).default(30_000),
     RABBITMQ_URL: z.string().url().default('amqp://dam:dam_local_password@localhost:5672'),
     JWT_ISSUER: z.string().min(1).default('enterprise-dam'),
     JWT_AUDIENCE: z.string().min(1).default('enterprise-dam-api'),

@@ -54,6 +54,12 @@ export const integrationSuites = [
     enableVariable: 'DAM_LIFECYCLE_INTEGRATION_TESTS',
   },
   {
+    name: 'Reconciliation',
+    workspace: '@dam/worker',
+    spec: 'src/maintenance/storage-reconciliation.integration.spec.ts',
+    enableVariable: 'DAM_RECONCILIATION_INTEGRATION_TESTS',
+  },
+  {
     name: 'Maintenance',
     workspace: '@dam/api',
     spec: 'src/maintenance/storage-reconciliation.integration.spec.ts',

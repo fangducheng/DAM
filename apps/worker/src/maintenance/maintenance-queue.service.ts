@@ -54,6 +54,7 @@ export class MaintenanceQueueService {
       WHERE job."id" = candidate."id"
       RETURNING
         job."id",
+        job."idempotency_key" AS "idempotencyKey",
         job."tenant_id" AS "tenantId",
         job."space_id" AS "spaceId",
         job."job_type" AS "jobType",
@@ -84,6 +85,38 @@ export class MaintenanceQueueService {
       },
     });
     if (result.count !== 1) throw new Error(`Maintenance job ${jobId} lease was lost`);
+  }
+
+  async renew(job: Pick<ClaimedMaintenanceJob, 'id' | 'lockedBy'>): Promise<Date> {
+    const now = new Date();
+    const leaseExpiresAt = new Date(now.getTime() + this.leaseSeconds * 1_000);
+    const result = await this.prisma.maintenanceJob.updateMany({
+      where: {
+        id: job.id,
+        status: 'RUNNING',
+        lockedBy: job.lockedBy,
+        leaseExpiresAt: { gt: now },
+      },
+      data: { leaseExpiresAt },
+    });
+    if (result.count !== 1) throw new Error(`Maintenance job ${job.id} lease was lost`);
+    return leaseExpiresAt;
+  }
+
+  async assertActiveLease(
+    database: Prisma.TransactionClient,
+    job: Pick<ClaimedMaintenanceJob, 'id' | 'lockedBy'>,
+  ): Promise<void> {
+    const leases = await database.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id"
+      FROM "maintenance_jobs"
+      WHERE "id" = ${job.id}::uuid
+        AND "status" = 'RUNNING'
+        AND "locked_by" = ${job.lockedBy}
+        AND "lease_expires_at" > CURRENT_TIMESTAMP
+      FOR UPDATE
+    `);
+    if (leases.length !== 1) throw new Error(`Maintenance job ${job.id} lease was lost`);
   }
 
   async fail(

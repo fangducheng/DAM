@@ -134,7 +134,17 @@ await test('forces the dedicated database, isolates suite flags, and adds the me
 await test('keeps the complete integration suite plan in strict runner order', () => {
   assert.deepEqual(
     integrationSuites.map((suite) => suite.name),
-    ['Identity', 'Tenant', 'Space', 'Asset', 'Discovery', 'Processing', 'Lifecycle', 'Maintenance'],
+    [
+      'Identity',
+      'Tenant',
+      'Space',
+      'Asset',
+      'Discovery',
+      'Processing',
+      'Lifecycle',
+      'Reconciliation',
+      'Maintenance',
+    ],
   );
 });
 

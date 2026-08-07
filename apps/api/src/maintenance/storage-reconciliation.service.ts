@@ -1,266 +1,228 @@
-import { createHash } from 'node:crypto';
-
 import { HttpStatus, Injectable } from '@nestjs/common';
 
+import { Prisma } from '@dam/database';
 import type { AuthenticatedUser } from '@dam/contracts';
 
 import type { AuthorizationRequestMetadata } from '../authorization/authorization.types.js';
 import { ApiException } from '../common/errors/api.exception.js';
-import { ObjectStorageService } from '../infrastructure/object-storage.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
-import type { StorageReconciliationPageQueryDto } from './dto/maintenance.dto.js';
+import type {
+  CreateStorageReconciliationRunDto,
+  StorageReconciliationIssuePageQueryDto,
+  StorageReconciliationRunPageQueryDto,
+} from './dto/maintenance.dto.js';
 
-type StorageReconciliationItem =
-  | {
-      id: string;
-      issueType: 'DATABASE_OBJECT_MISSING';
-      storageObjectId: string;
-      expectedSizeBytes: string;
-      databaseCreatedAt: Date;
-    }
-  | {
-      id: string;
-      issueType: 'STORAGE_OBJECT_UNKNOWN';
-      objectFingerprint: string;
-      observedSizeBytes: string;
-      lastModifiedAt: Date;
-    };
+const activeStatuses = ['QUEUED', 'RUNNING', 'RETRYING'] as const;
 
-const databaseBatchSize = 250;
-const storageBatchSize = 250;
-const statConcurrency = 8;
-const knownUploadStatuses = ['CREATED', 'UPLOADING'] as const;
-const pendingDeletionStatuses = ['PENDING', 'RUNNING', 'FAILED', 'DEAD'] as const;
+const safeRunSelect = {
+  id: true,
+  sourceRunId: true,
+  requestedBy: { select: { id: true, displayName: true } },
+  status: true,
+  phase: true,
+  databaseObjects: true,
+  storageObjects: true,
+  missingObjects: true,
+  unknownObjects: true,
+  cutoffAt: true,
+  lastCheckpointAt: true,
+  startedAt: true,
+  completedAt: true,
+  errorCode: true,
+  errorMessage: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 @Injectable()
 export class StorageReconciliationService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly storage: ObjectStorageService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async report(
+  async createRun(
     actor: AuthenticatedUser,
-    query: StorageReconciliationPageQueryDto,
+    input: CreateStorageReconciliationRunDto,
     metadata: AuthorizationRequestMetadata,
   ) {
-    const candidates: StorageReconciliationItem[] = [];
-    const summary = {
-      databaseObjects: 0,
-      storageObjects: 0,
-      missingObjects: 0,
-      unknownObjects: 0,
-    };
-    const collect = (item: StorageReconciliationItem) => {
-      if (query.cursor !== undefined && item.id <= query.cursor) {
-        return;
-      }
-      candidates.push(item);
-      candidates.sort((left, right) => left.id.localeCompare(right.id));
-      if (candidates.length > query.limit + 1) {
-        candidates.pop();
-      }
-    };
+    try {
+      return await this.prisma.$transaction(async (database) => {
+        if (input.sourceRunId !== undefined) {
+          const source = await database.storageReconciliationRun.findFirst({
+            where: { id: input.sourceRunId, tenantId: actor.tenantId },
+            select: { id: true },
+          });
+          if (source === null) throw this.runNotFound();
+        }
 
-    await this.reconcileDatabaseObjects(actor.tenantId, summary, collect);
-    await this.reconcileStorageObjects(actor.tenantId, summary, collect);
+        const active = await database.storageReconciliationRun.findFirst({
+          where: { tenantId: actor.tenantId, status: { in: [...activeStatuses] } },
+          select: { id: true },
+        });
+        if (active !== null) throw this.activeRunConflict();
 
-    const items = candidates.slice(0, query.limit);
-    const nextCursor =
-      candidates.length > query.limit && items.length > 0 ? items[items.length - 1]!.id : null;
-    await this.prisma.auditEvent.create({
-      data: {
+        const run = await database.storageReconciliationRun.create({
+          data: {
+            tenantId: actor.tenantId,
+            requestedById: actor.userId,
+            sourceRunId: input.sourceRunId ?? null,
+          },
+          select: safeRunSelect,
+        });
+        await database.maintenanceJob.create({
+          data: {
+            tenantId: actor.tenantId,
+            jobType: 'RECONCILE_STORAGE_STEP',
+            idempotencyKey: `reconciliation:${run.id}:step:0`,
+            targetId: run.id,
+            payload: { phase: 'DATABASE_SCAN', checkpointVersion: 0 },
+          },
+          select: { id: true },
+        });
+        await database.auditEvent.create({
+          data: {
+            tenantId: actor.tenantId,
+            actorUserId: actor.userId,
+            action: 'storage.reconciliation.requested',
+            resourceType: 'STORAGE_RECONCILIATION_RUN',
+            resourceId: run.id,
+            result: 'SUCCEEDED',
+            ipAddress: metadata.ipAddress ?? null,
+            userAgent: metadata.userAgent ?? null,
+            requestId: metadata.requestId ?? null,
+            ...(input.sourceRunId === undefined
+              ? {}
+              : { details: { sourceRunId: input.sourceRunId } }),
+          },
+        });
+        return run;
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw this.activeRunConflict();
+      }
+      throw error;
+    }
+  }
+
+  async listRuns(actor: AuthenticatedUser, query: StorageReconciliationRunPageQueryDto) {
+    const records = await this.prisma.storageReconciliationRun.findMany({
+      where: {
         tenantId: actor.tenantId,
-        actorUserId: actor.userId,
-        action: 'storage.reconciliation.read',
-        resourceType: 'TENANT',
-        resourceId: actor.tenantId,
-        result: 'SUCCEEDED',
-        ipAddress: metadata.ipAddress ?? null,
-        userAgent: metadata.userAgent ?? null,
-        requestId: metadata.requestId ?? null,
-        details: {
-          ...summary,
-          returnedItems: items.length,
-          hasNextPage: nextCursor !== null,
-        },
+        ...(query.status === undefined ? {} : { status: query.status }),
+        ...(query.cursor === undefined ? {} : { id: { lt: query.cursor } }),
+      },
+      orderBy: { id: 'desc' },
+      take: query.limit + 1,
+      select: safeRunSelect,
+    });
+    const items = records.slice(0, query.limit);
+    return {
+      items,
+      nextCursor:
+        records.length > query.limit && items.length > 0 ? items[items.length - 1]!.id : null,
+    };
+  }
+
+  async getRun(actor: AuthenticatedUser, runId: string) {
+    const run = await this.prisma.storageReconciliationRun.findFirst({
+      where: { id: runId, tenantId: actor.tenantId },
+      select: safeRunSelect,
+    });
+    if (run === null) throw this.runNotFound();
+    return run;
+  }
+
+  async listIssues(
+    actor: AuthenticatedUser,
+    runId: string,
+    query: StorageReconciliationIssuePageQueryDto,
+  ) {
+    const run = await this.prisma.storageReconciliationRun.findFirst({
+      where: { id: runId, tenantId: actor.tenantId },
+      select: {
+        id: true,
+        status: true,
+        databaseObjects: true,
+        storageObjects: true,
+        missingObjects: true,
+        unknownObjects: true,
+        completedAt: true,
       },
     });
-    return { generatedAt: new Date(), summary, items, nextCursor };
-  }
-
-  private async reconcileDatabaseObjects(
-    tenantId: string,
-    summary: { databaseObjects: number; missingObjects: number },
-    collect: (item: StorageReconciliationItem) => void,
-  ): Promise<void> {
-    let cursor: string | undefined;
-    for (;;) {
-      const objects = await this.prisma.storageObject.findMany({
-        where: this.tenantStorageObjectWhere(tenantId),
-        orderBy: { id: 'asc' },
-        take: databaseBatchSize,
-        ...(cursor === undefined ? {} : { cursor: { id: cursor }, skip: 1 }),
-        select: {
-          id: true,
-          bucket: true,
-          objectKey: true,
-          sizeBytes: true,
-          createdAt: true,
-        },
-      });
-      summary.databaseObjects += objects.length;
-      for (let start = 0; start < objects.length; start += statConcurrency) {
-        const batch = objects.slice(start, start + statConcurrency);
-        await Promise.all(
-          batch.map(async (object) => {
-            let exists: boolean;
-            try {
-              exists = await this.storage.objectExists(object.bucket, object.objectKey);
-            } catch {
-              throw this.storageUnavailable();
-            }
-            if (exists) {
-              return;
-            }
-            summary.missingObjects += 1;
-            collect({
-              id: this.issueId('DATABASE_OBJECT_MISSING', object.id),
-              issueType: 'DATABASE_OBJECT_MISSING',
-              storageObjectId: object.id,
-              expectedSizeBytes: object.sizeBytes.toString(),
-              databaseCreatedAt: object.createdAt,
-            });
-          }),
-        );
-      }
-      if (objects.length < databaseBatchSize) {
-        return;
-      }
-      cursor = objects[objects.length - 1]!.id;
+    if (run === null) throw this.runNotFound();
+    if (run.status !== 'SUCCEEDED') {
+      throw new ApiException(
+        HttpStatus.CONFLICT,
+        'VERSION_CONFLICT',
+        '对账结果尚未完成，请稍后刷新',
+      );
     }
-  }
 
-  private async reconcileStorageObjects(
-    tenantId: string,
-    summary: { storageObjects: number; unknownObjects: number },
-    collect: (item: StorageReconciliationItem) => void,
-  ): Promise<void> {
-    let batch: Array<{ objectKey: string; sizeBytes: bigint; lastModified: Date }> = [];
-    const flush = async () => {
-      if (batch.length === 0) {
-        return;
-      }
-      const objectKeys = batch.map((object) => object.objectKey);
-      const bucket = this.storage.bucketName();
-      const [registeredObjects, uploadSessions, deletionJobs] = await Promise.all([
-        this.prisma.storageObject.findMany({
-          where: { bucket, objectKey: { in: objectKeys } },
-          select: { objectKey: true },
-        }),
-        this.prisma.uploadSession.findMany({
-          where: {
-            space: { tenantId },
-            status: { in: [...knownUploadStatuses] },
-            objectKey: { in: objectKeys },
+    const records = await this.prisma.storageReconciliationIssue.findMany({
+      where: {
+        runId,
+        tenantId: actor.tenantId,
+        ...(query.issueType === undefined ? {} : { issueType: query.issueType }),
+        ...(query.cursor === undefined ? {} : { issueKey: { gt: query.cursor } }),
+      },
+      orderBy: { issueKey: 'asc' },
+      take: query.limit + 1,
+      select: {
+        issueKey: true,
+        issueType: true,
+        storageObjectId: true,
+        objectFingerprint: true,
+        expectedSizeBytes: true,
+        observedSizeBytes: true,
+        databaseCreatedAt: true,
+        lastModifiedAt: true,
+      },
+    });
+    const page = records.slice(0, query.limit);
+    const items = page.map((issue) =>
+      issue.issueType === 'DATABASE_OBJECT_MISSING'
+        ? {
+            id: issue.issueKey,
+            issueType: issue.issueType,
+            storageObjectId: issue.storageObjectId!,
+            expectedSizeBytes: issue.expectedSizeBytes!.toString(),
+            databaseCreatedAt: issue.databaseCreatedAt!,
+          }
+        : {
+            id: issue.issueKey,
+            issueType: issue.issueType,
+            objectFingerprint: issue.objectFingerprint!,
+            observedSizeBytes: issue.observedSizeBytes!.toString(),
+            lastModifiedAt: issue.lastModifiedAt!,
           },
-          select: { objectKey: true },
-        }),
-        this.prisma.maintenanceJob.findMany({
-          where: {
-            tenantId,
-            jobType: 'DELETE_STORAGE_OBJECT',
-            status: { in: [...pendingDeletionStatuses] },
-            AND: [{ payload: { path: ['bucket'], equals: bucket } }],
-            OR: objectKeys.map((objectKey) => ({
-              payload: { path: ['objectKey'], equals: objectKey },
-            })),
-          },
-          select: { payload: true },
-        }),
-      ]);
-      const knownKeys = new Set([
-        ...registeredObjects.map((object) => object.objectKey),
-        ...uploadSessions.map((session) => session.objectKey),
-        ...deletionJobs.flatMap(({ payload }) => {
-          const objectKey = this.deletionObjectKey(payload, bucket);
-          return objectKey === null ? [] : [objectKey];
-        }),
-      ]);
-      for (const object of batch) {
-        if (knownKeys.has(object.objectKey)) {
-          continue;
-        }
-        summary.unknownObjects += 1;
-        const fingerprint = this.issueId('STORAGE_OBJECT_UNKNOWN', object.objectKey);
-        collect({
-          id: fingerprint,
-          issueType: 'STORAGE_OBJECT_UNKNOWN',
-          objectFingerprint: fingerprint,
-          observedSizeBytes: object.sizeBytes.toString(),
-          lastModifiedAt: object.lastModified,
-        });
-      }
-      batch = [];
-    };
-
-    const objects = this.storage.listTenantObjects(tenantId)[Symbol.asyncIterator]();
-    for (;;) {
-      let next: IteratorResult<{ objectKey: string; sizeBytes: bigint; lastModified: Date }>;
-      try {
-        next = await objects.next();
-      } catch {
-        throw this.storageUnavailable();
-      }
-      if (next.done) {
-        break;
-      }
-      summary.storageObjects += 1;
-      batch.push(next.value);
-      if (batch.length >= storageBatchSize) {
-        await flush();
-      }
-    }
-    await flush();
-  }
-
-  private tenantStorageObjectWhere(tenantId: string) {
+    );
     return {
-      OR: [
-        { objectKey: { startsWith: this.tenantObjectPrefix(tenantId) } },
-        { sourceVersions: { some: { asset: { node: { space: { tenantId } } } } } },
-        {
-          renditions: {
-            some: { assetVersion: { asset: { node: { space: { tenantId } } } } },
-          },
-        },
-      ],
+      runId: run.id,
+      generatedAt: run.completedAt,
+      summary: {
+        databaseObjects: run.databaseObjects,
+        storageObjects: run.storageObjects,
+        missingObjects: run.missingObjects,
+        unknownObjects: run.unknownObjects,
+      },
+      items,
+      nextCursor:
+        records.length > query.limit && page.length > 0 ? page[page.length - 1]!.issueKey : null,
     };
   }
 
-  private tenantObjectPrefix(tenantId: string): string {
-    return `tenants/${tenantId}/`;
-  }
-
-  private deletionObjectKey(payload: unknown, expectedBucket: string): string | null {
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      return null;
-    }
-    const record = payload as Record<string, unknown>;
-    return record['bucket'] === expectedBucket && typeof record['objectKey'] === 'string'
-      ? record['objectKey']
-      : null;
-  }
-
-  private issueId(issueType: StorageReconciliationItem['issueType'], value: string): string {
-    return createHash('sha256').update(issueType).update('\0').update(value).digest('hex');
-  }
-
-  private storageUnavailable(): ApiException {
+  private activeRunConflict(): ApiException {
     return new ApiException(
-      HttpStatus.SERVICE_UNAVAILABLE,
-      'INTERNAL_ERROR',
-      '对象存储暂时不可用，无法生成对账报告',
+      HttpStatus.CONFLICT,
+      'VERSION_CONFLICT',
+      '当前已有存储对账任务正在执行，请刷新后查看进度',
+    );
+  }
+
+  private runNotFound(): ApiException {
+    return new ApiException(
+      HttpStatus.NOT_FOUND,
+      'RESOURCE_NOT_FOUND',
+      '存储对账记录不存在或你无权查看',
     );
   }
 }

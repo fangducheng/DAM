@@ -6,6 +6,7 @@ import { Prisma } from '@dam/database';
 import { ObjectStorageService } from '../infrastructure/object-storage.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
 import type { ClaimedMaintenanceJob } from './maintenance-job.types.js';
+import { StorageReconciliationProcessorService } from './storage-reconciliation-processor.service.js';
 
 interface LockedDeletionBatch {
   id: string;
@@ -29,6 +30,7 @@ export class MaintenanceProcessorService {
     private readonly prisma: PrismaService,
     private readonly storage: ObjectStorageService,
     config: ConfigService,
+    private readonly reconciliation: StorageReconciliationProcessorService,
   ) {
     this.readRetentionDays = config.getOrThrow<number>('NOTIFICATION_READ_RETENTION_DAYS');
     this.archivedRetentionDays = config.getOrThrow<number>('NOTIFICATION_ARCHIVED_RETENTION_DAYS');
@@ -55,6 +57,11 @@ export class MaintenanceProcessorService {
       case 'PRUNE_COMPLETED_JOBS':
         await this.pruneCompletedJobs(job);
         return;
+      case 'RECONCILE_STORAGE_STEP':
+        await this.reconciliation.process(job);
+        return;
+      default:
+        throw new Error(`Unsupported maintenance job type: ${String(job.jobType)}`);
     }
   }
 
@@ -64,6 +71,10 @@ export class MaintenanceProcessorService {
     terminal: boolean,
     error: unknown,
   ): Promise<void> {
+    if (job.jobType === 'RECONCILE_STORAGE_STEP') {
+      await this.reconciliation.recordFailure(database, job, terminal, error);
+      return;
+    }
     if (!terminal) return;
     const message = this.safeError(error);
     if (job.jobType === 'PURGE_DELETION_BATCH' && job.targetId !== null) {

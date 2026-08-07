@@ -168,8 +168,8 @@ idempotently and never deletes or empties them. Then run:
 pnpm test:integration:local
 ```
 
-`test:integration:local` loads the repository root `.env` and runs all eight integration specs:
-Identity, Tenant, Space, Asset, Discovery, Processing, Lifecycle, and Maintenance. They run strictly
+`test:integration:local` loads the repository root `.env` and runs all nine integration specs:
+Identity, Tenant, Space, Asset, Discovery, Processing, Lifecycle, Reconciliation, and Maintenance. They run strictly
 one at a time after a single-concurrency shared-package build. The runner forces every spec to use
 `DAM_INTEGRATION_DATABASE_URL` as `DATABASE_URL` and `DAM_INTEGRATION_MINIO_BUCKET` as
 `MINIO_BUCKET`, injects the internal safety sentinel, and stops at the first failure. Directly

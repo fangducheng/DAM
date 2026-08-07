@@ -80,6 +80,13 @@ export class WorkerRuntimeService implements OnModuleInit, OnModuleDestroy {
     if (!this.processingEnabled) return false;
     const job = await this.processingQueue.claim();
     if (job === null) return false;
+    if (job.attempts > job.maxAttempts) {
+      await this.handleProcessingFailure(
+        job,
+        new Error('Processing job exceeded maximum attempts'),
+      );
+      return true;
+    }
     try {
       await this.processor.process(job);
       await this.processingQueue.complete(job.id);
@@ -94,6 +101,13 @@ export class WorkerRuntimeService implements OnModuleInit, OnModuleDestroy {
     if (!this.maintenanceEnabled) return false;
     const job = await this.maintenanceQueue.claim();
     if (job === null) return false;
+    if (job.attempts > job.maxAttempts) {
+      await this.handleMaintenanceFailure(
+        job,
+        new Error('Maintenance job exceeded maximum attempts'),
+      );
+      return true;
+    }
     try {
       await this.maintenance.process(job);
       await this.maintenanceQueue.complete(job.id);

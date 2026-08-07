@@ -18,6 +18,7 @@ export class MaintenanceJobPageQueryDto {
     'DELETE_STORAGE_OBJECT',
     'PRUNE_NOTIFICATIONS',
     'PRUNE_COMPLETED_JOBS',
+    'RECONCILE_STORAGE_STEP',
   ])
   jobType?:
     | 'EXPIRE_UPLOAD_SESSION'
@@ -25,7 +26,8 @@ export class MaintenanceJobPageQueryDto {
     | 'PURGE_DELETION_BATCH'
     | 'DELETE_STORAGE_OBJECT'
     | 'PRUNE_NOTIFICATIONS'
-    | 'PRUNE_COMPLETED_JOBS';
+    | 'PRUNE_COMPLETED_JOBS'
+    | 'RECONCILE_STORAGE_STEP';
 
   @IsOptional()
   @IsUUID()
@@ -39,10 +41,37 @@ export class MaintenanceJobPageQueryDto {
   limit = 50;
 }
 
-export class StorageReconciliationPageQueryDto {
+export class CreateStorageReconciliationRunDto {
+  @IsOptional()
+  @IsUUID()
+  sourceRunId?: string;
+}
+
+export class StorageReconciliationRunPageQueryDto {
+  @IsOptional()
+  @IsUUID()
+  cursor?: string;
+
+  @IsOptional()
+  @IsIn(['QUEUED', 'RUNNING', 'RETRYING', 'SUCCEEDED', 'FAILED'])
+  status?: 'QUEUED' | 'RUNNING' | 'RETRYING' | 'SUCCEEDED' | 'FAILED';
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 50;
+}
+
+export class StorageReconciliationIssuePageQueryDto {
   @IsOptional()
   @Matches(/^[a-f0-9]{64}$/)
   cursor?: string;
+
+  @IsOptional()
+  @IsIn(['DATABASE_OBJECT_MISSING', 'STORAGE_OBJECT_UNKNOWN'])
+  issueType?: 'DATABASE_OBJECT_MISSING' | 'STORAGE_OBJECT_UNKNOWN';
 
   @IsOptional()
   @Transform(({ value }) => Number(value))
