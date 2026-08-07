@@ -142,6 +142,44 @@ Do not keep Playwright or a browser verification process running while these com
 optional Docker profiles first if Windows is already under memory pressure. Vitest is configured to
 use one worker and disables file-level parallelism in every workspace package.
 
+### Local integration tests
+
+The local integration suite requires the PostgreSQL, Redis, and MinIO base containers to be running
+before the command starts. Prepare a dedicated database once, then deploy migrations and seed its
+reference roles without changing the normal development database:
+
+```powershell
+pnpm infra:up
+docker compose exec postgres createdb -U dam dam_integration
+$env:DATABASE_URL = 'postgresql://dam:dam_local_password@localhost:5433/dam_integration?schema=public'
+pnpm --filter @dam/database migrate:deploy
+pnpm --filter @dam/database seed
+Remove-Item Env:DATABASE_URL
+```
+
+Keep both URLs and both MinIO bucket names in the repository root `.env` as shown in `.env.example`.
+The integration database URL must use `localhost`, `127.0.0.1`, or `::1`, its database name must
+contain `test` or `integration`, and it must point to a different database from `DATABASE_URL`.
+`MINIO_ENDPOINT` is also restricted to those loopback hosts. `DAM_INTEGRATION_MINIO_BUCKET` must
+contain `test` or `integration` and differ from `MINIO_BUCKET`; `minio-init` creates both buckets
+idempotently and never deletes or empties them. Then run:
+
+```powershell
+pnpm test:integration:local
+```
+
+`test:integration:local` loads the repository root `.env` and runs all eight integration specs:
+Identity, Tenant, Space, Asset, Discovery, Processing, Lifecycle, and Maintenance. They run strictly
+one at a time after a single-concurrency shared-package build. The runner forces every spec to use
+`DAM_INTEGRATION_DATABASE_URL` as `DATABASE_URL` and `DAM_INTEGRATION_MINIO_BUCKET` as
+`MINIO_BUCKET`, injects the internal safety sentinel, and stops at the first failure. Directly
+enabling an integration spec is blocked; always use the root command so the database and object
+storage safety checks run first. Each child process uses a 384 MB Node.js old-space limit unless
+`NODE_OPTIONS` already contains a caller-defined limit. The runner itself does not start or stop
+Docker, create a database, deploy migrations, seed data, reset the database, or delete object storage
+contents. Do not run another build, test, Worker, Playwright, or browser verification command
+alongside this suite on the 8 GB workstation.
+
 ## Shutdown
 
 ```powershell

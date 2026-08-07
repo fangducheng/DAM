@@ -280,6 +280,11 @@ try {
     message: '维护任务暂时无法加载，请检查网络后重试',
     trigger: () => page.reload({ waitUntil: 'domcontentloaded' }),
   });
+  const desktopReconciliation = await verifyStorageReconciliation(
+    page,
+    outputDirectory,
+    expectedFailedResponses,
+  );
   const desktopMaintenanceRetry = await verifyMaintenanceInteractions(page, outputDirectory);
   await verifyMaintenanceVisibility(page, baseUrl);
 
@@ -339,6 +344,7 @@ try {
   const mobileMaintenance = join(outputDirectory, 'maintenance-mobile.png');
   await page.screenshot({ path: mobileMaintenance, fullPage: true });
   const mobileMaintenanceOverflow = await hasPageOverflow(page);
+  const mobileReconciliation = await verifyStorageReconciliationMobile(page, outputDirectory);
 
   await page.getByRole('link', { name: '目录权限' }).click();
   await page.waitForURL('**/permissions');
@@ -360,12 +366,14 @@ try {
       desktopNotifications,
       desktopAudit,
       desktopMaintenance,
+      desktopReconciliation: desktopReconciliation.screenshot,
       desktopMaintenanceRetry,
       mobileRecycleBin,
       mobileAssets,
       mobileNotifications,
       mobileAudit,
       mobileMaintenance,
+      mobileReconciliation: mobileReconciliation.screenshot,
       mobilePermissions,
     },
     overflow: {
@@ -378,11 +386,13 @@ try {
       desktopNotifications: desktopNotificationsOverflow,
       desktopAudit: desktopAuditOverflow,
       desktopMaintenance: desktopMaintenanceOverflow,
+      desktopReconciliation: desktopReconciliation.overflow,
       mobileRecycleBin: mobileRecycleBinOverflow,
       mobileAssets: mobileAssetsOverflow,
       mobileNotifications: mobileNotificationsOverflow,
       mobileAudit: mobileAuditOverflow,
       mobileMaintenance: mobileMaintenanceOverflow,
+      mobileReconciliation: mobileReconciliation.overflow,
       mobilePermissions: mobilePermissionsOverflow,
     },
     consoleErrors,
@@ -526,6 +536,218 @@ function withoutExpectedResponses(actual, expected) {
     remaining.set(key, count - 1);
     return false;
   });
+}
+
+/**
+ * Verifies safe reconciliation rendering, opaque cursor pagination, empty state, and retry.
+ * @param {import('playwright-core').Page} page
+ * @param {string} outputDirectory
+ * @param {Array<{ status: number; url: string }>} expectedFailures
+ */
+async function verifyStorageReconciliation(page, outputDirectory, expectedFailures) {
+  const routePattern = '**/api/v1/maintenance/storage-reconciliation?*';
+  const nextCursor = 'a'.repeat(64);
+  const missingObjectId = '10000000-0000-4000-8000-000000000001';
+  const unknownFingerprint = 'b'.repeat(64);
+  const hiddenBucket = 'dam-internal-secret-bucket';
+  const hiddenObjectKey = 'tenants/secret/object-key-that-must-not-render';
+  const now = new Date().toISOString();
+  let delayedResponse = true;
+  let failNext = false;
+  let emptyNext = false;
+  let nextPageObserved = false;
+
+  await page.route(routePattern, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    const cursor = url.searchParams.get('cursor');
+    nextPageObserved ||= cursor === nextCursor;
+    if (failNext) {
+      failNext = false;
+      expectedFailures.push({ status: 503, url: request.url() });
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 'INTERNAL_ERROR',
+          message: '对象存储暂时不可用，无法生成对账报告',
+          requestId: 'ui-expected-reconciliation-failure',
+        }),
+      });
+      return;
+    }
+    if (delayedResponse) {
+      delayedResponse = false;
+      await new Promise((resolve) => setTimeout(resolve, 180));
+    }
+    if (emptyNext) {
+      emptyNext = false;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          generatedAt: now,
+          summary: {
+            databaseObjects: 12,
+            storageObjects: 12,
+            missingObjects: 0,
+            unknownObjects: 0,
+          },
+          items: [],
+          nextCursor: null,
+        }),
+      });
+      return;
+    }
+    const onNextPage = cursor === nextCursor;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        generatedAt: now,
+        summary: { databaseObjects: 12, storageObjects: 13, missingObjects: 1, unknownObjects: 1 },
+        items: onNextPage
+          ? [
+              {
+                id: unknownFingerprint,
+                issueType: 'STORAGE_OBJECT_UNKNOWN',
+                objectFingerprint: unknownFingerprint,
+                observedSizeBytes: '5242880',
+                lastModifiedAt: now,
+                bucket: hiddenBucket,
+                objectKey: hiddenObjectKey,
+              },
+            ]
+          : [
+              {
+                id: '0'.repeat(64),
+                issueType: 'DATABASE_OBJECT_MISSING',
+                storageObjectId: missingObjectId,
+                expectedSizeBytes: '1048576',
+                databaseCreatedAt: now,
+                bucket: hiddenBucket,
+                objectKey: hiddenObjectKey,
+              },
+            ],
+        nextCursor: onNextPage ? null : nextCursor,
+      }),
+    });
+  });
+
+  try {
+    await page.getByRole('button', { name: '存储对账', exact: true }).click();
+    await page.getByText('正在核对数据库与对象存储', { exact: true }).waitFor();
+    await waitForView(page);
+    const summary = page.locator('[aria-label="存储对账摘要"]');
+    for (const [label, value] of [
+      ['数据库对象数', '12'],
+      ['存储对象数', '13'],
+      ['数据库记录缺失对象', '1'],
+      ['存储中未知对象', '1'],
+    ]) {
+      const metric = summary.locator('article').filter({ hasText: label });
+      await metric.waitFor();
+      if ((await metric.locator('strong').textContent())?.trim() !== value) {
+        throw new Error(`Reconciliation summary did not render ${label}: ${value}`);
+      }
+    }
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
+    if ((await page.getByText(nextCursor, { exact: true }).count()) !== 0) {
+      throw new Error('Reconciliation cursor was rendered to the user');
+    }
+    for (const secret of [hiddenBucket, hiddenObjectKey]) {
+      if ((await page.getByText(secret, { exact: true }).count()) !== 0) {
+        throw new Error('Reconciliation rendered a storage bucket or object key');
+      }
+    }
+
+    failNext = true;
+    await page.getByRole('button', { name: '下一页', exact: true }).click();
+    const errorState = page.locator('.reconciliation-inline-error[role="alert"]');
+    await errorState
+      .getByText('存储对账报告暂时无法生成，请检查对象存储后重试', { exact: true })
+      .waitFor();
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
+    await page.getByText('第 1 页', { exact: true }).waitFor();
+    if ((await page.getByText(unknownFingerprint, { exact: true }).count()) !== 0) {
+      throw new Error('Failed reconciliation page replaced the current report');
+    }
+    if (!nextPageObserved) throw new Error('Opaque reconciliation cursor was not sent to the API');
+
+    await errorState.getByRole('button', { name: '重试请求', exact: true }).click();
+    await page.getByText(unknownFingerprint, { exact: true }).waitFor();
+    await page.getByText('第 2 页', { exact: true }).waitFor();
+    await errorState.waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: '上一页', exact: true }).click();
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
+    await page.getByText('第 1 页', { exact: true }).waitFor();
+
+    emptyNext = true;
+    await page.getByRole('button', { name: '下一页', exact: true }).click();
+    await page.getByText('未发现存储差异', { exact: true }).waitFor();
+    await page.getByText('第 2 页', { exact: true }).waitFor();
+    const emptyPagePrevious = page.getByRole('button', { name: '上一页', exact: true });
+    if (await emptyPagePrevious.isDisabled()) {
+      throw new Error('Empty reconciliation page did not preserve previous-page navigation');
+    }
+    await emptyPagePrevious.click();
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
+    await page.getByText('第 1 页', { exact: true }).waitFor();
+
+    emptyNext = true;
+    await page.getByTitle('重新生成存储对账报告').click();
+    await waitForView(page);
+    await page.getByText('未发现存储差异', { exact: true }).waitFor();
+    await page.getByTitle('重新生成存储对账报告').click();
+    await waitForView(page);
+    await page.getByText(missingObjectId, { exact: true }).waitFor();
+
+    const screenshot = join(outputDirectory, 'storage-reconciliation-desktop.png');
+    await page.screenshot({ path: screenshot, fullPage: true });
+    return { screenshot, overflow: await hasPageOverflow(page) };
+  } finally {
+    await page.unroute(routePattern);
+  }
+}
+
+/**
+ * @param {import('playwright-core').Page} page
+ * @param {string} outputDirectory
+ */
+async function verifyStorageReconciliationMobile(page, outputDirectory) {
+  const routePattern = '**/api/v1/maintenance/storage-reconciliation?*';
+  const fingerprint = 'c'.repeat(64);
+  await page.route(routePattern, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        summary: { databaseObjects: 27, storageObjects: 28, missingObjects: 0, unknownObjects: 1 },
+        items: [
+          {
+            id: fingerprint,
+            issueType: 'STORAGE_OBJECT_UNKNOWN',
+            objectFingerprint: fingerprint,
+            observedSizeBytes: '987654321',
+            lastModifiedAt: new Date().toISOString(),
+          },
+        ],
+        nextCursor: 'd'.repeat(64),
+      }),
+    }),
+  );
+  try {
+    await page.getByRole('button', { name: '存储对账', exact: true }).click();
+    await waitForView(page);
+    await page.getByText(fingerprint, { exact: true }).waitFor();
+    const screenshot = join(outputDirectory, 'storage-reconciliation-mobile.png');
+    await page.screenshot({ path: screenshot, fullPage: true });
+    return { screenshot, overflow: await hasPageOverflow(page) };
+  } finally {
+    await page.unroute(routePattern);
+  }
 }
 
 /**

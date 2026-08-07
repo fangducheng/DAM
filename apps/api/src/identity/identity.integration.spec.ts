@@ -14,6 +14,7 @@ import { AuthorizationPolicy } from '../authorization/authorization.policy.js';
 import { AuthorizationService } from '../authorization/authorization.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
 import type { RedisService } from '../infrastructure/redis.service.js';
+import { assertLocalIntegrationRunner } from '../testing/integration-test.guard.js';
 import { IdentityService } from './identity.service.js';
 import { InvitationService } from './invitation.service.js';
 import { IdentityTokenService } from './security/identity-token.service.js';
@@ -23,6 +24,7 @@ import { TotpService } from './security/totp.service.js';
 import { SessionService } from './session.service.js';
 
 const integrationEnabled = process.env['DAM_IDENTITY_INTEGRATION_TESTS'] === '1';
+assertLocalIntegrationRunner(integrationEnabled);
 const integration = integrationEnabled ? describe : describe.skip;
 
 if (integrationEnabled) {

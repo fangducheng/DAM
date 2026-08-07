@@ -7,12 +7,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { ObjectStorageService } from '../infrastructure/object-storage.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
+import { assertLocalIntegrationRunner } from '../testing/integration-test.guard.js';
 import { AssetProcessingService } from './asset-processing.service.js';
 import { ClamAvService } from './clamav.service.js';
 import { ContentExtractionService } from './content-extraction.service.js';
 import { ProcessingQueueService } from './processing-queue.service.js';
 
 const integrationEnabled = process.env['DAM_PROCESSING_INTEGRATION_TESTS'] === '1';
+assertLocalIntegrationRunner(integrationEnabled);
 const integration = integrationEnabled ? describe : describe.skip;
 
 integration('deferred processing pipeline', () => {

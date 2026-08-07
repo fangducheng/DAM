@@ -29,6 +29,8 @@ type StorageReconciliationItem =
 const databaseBatchSize = 250;
 const storageBatchSize = 250;
 const statConcurrency = 8;
+const knownUploadStatuses = ['CREATED', 'UPLOADING'] as const;
+const pendingDeletionStatuses = ['PENDING', 'RUNNING', 'FAILED', 'DEAD'] as const;
 
 @Injectable()
 export class StorageReconciliationService {
@@ -149,15 +151,42 @@ export class StorageReconciliationService {
       if (batch.length === 0) {
         return;
       }
-      const known = await this.prisma.storageObject.findMany({
-        where: {
-          ...this.tenantStorageObjectWhere(tenantId),
-          bucket: this.storage.bucketName(),
-          objectKey: { in: batch.map((object) => object.objectKey) },
-        },
-        select: { objectKey: true },
-      });
-      const knownKeys = new Set(known.map((object) => object.objectKey));
+      const objectKeys = batch.map((object) => object.objectKey);
+      const bucket = this.storage.bucketName();
+      const [registeredObjects, uploadSessions, deletionJobs] = await Promise.all([
+        this.prisma.storageObject.findMany({
+          where: { bucket, objectKey: { in: objectKeys } },
+          select: { objectKey: true },
+        }),
+        this.prisma.uploadSession.findMany({
+          where: {
+            space: { tenantId },
+            status: { in: [...knownUploadStatuses] },
+            objectKey: { in: objectKeys },
+          },
+          select: { objectKey: true },
+        }),
+        this.prisma.maintenanceJob.findMany({
+          where: {
+            tenantId,
+            jobType: 'DELETE_STORAGE_OBJECT',
+            status: { in: [...pendingDeletionStatuses] },
+            AND: [{ payload: { path: ['bucket'], equals: bucket } }],
+            OR: objectKeys.map((objectKey) => ({
+              payload: { path: ['objectKey'], equals: objectKey },
+            })),
+          },
+          select: { payload: true },
+        }),
+      ]);
+      const knownKeys = new Set([
+        ...registeredObjects.map((object) => object.objectKey),
+        ...uploadSessions.map((session) => session.objectKey),
+        ...deletionJobs.flatMap(({ payload }) => {
+          const objectKey = this.deletionObjectKey(payload, bucket);
+          return objectKey === null ? [] : [objectKey];
+        }),
+      ]);
       for (const object of batch) {
         if (knownKeys.has(object.objectKey)) {
           continue;
@@ -198,6 +227,7 @@ export class StorageReconciliationService {
   private tenantStorageObjectWhere(tenantId: string) {
     return {
       OR: [
+        { objectKey: { startsWith: this.tenantObjectPrefix(tenantId) } },
         { sourceVersions: { some: { asset: { node: { space: { tenantId } } } } } },
         {
           renditions: {
@@ -206,6 +236,20 @@ export class StorageReconciliationService {
         },
       ],
     };
+  }
+
+  private tenantObjectPrefix(tenantId: string): string {
+    return `tenants/${tenantId}/`;
+  }
+
+  private deletionObjectKey(payload: unknown, expectedBucket: string): string | null {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+      return null;
+    }
+    const record = payload as Record<string, unknown>;
+    return record['bucket'] === expectedBucket && typeof record['objectKey'] === 'string'
+      ? record['objectKey']
+      : null;
   }
 
   private issueId(issueType: StorageReconciliationItem['issueType'], value: string): string {

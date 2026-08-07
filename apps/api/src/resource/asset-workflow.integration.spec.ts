@@ -14,11 +14,13 @@ import { ObjectStorageService } from '../infrastructure/object-storage.service.j
 import { PrismaService } from '../infrastructure/prisma.service.js';
 import type { RedisService } from '../infrastructure/redis.service.js';
 import { SpaceService } from '../space/space.service.js';
+import { assertLocalIntegrationRunner } from '../testing/integration-test.guard.js';
 import { AssetService } from './asset.service.js';
 import { ResourceService } from './resource.service.js';
 import { UploadService } from './upload.service.js';
 
 const integrationEnabled = process.env['DAM_ASSET_INTEGRATION_TESTS'] === '1';
+assertLocalIntegrationRunner(integrationEnabled);
 const integration = integrationEnabled ? describe : describe.skip;
 
 if (integrationEnabled) {

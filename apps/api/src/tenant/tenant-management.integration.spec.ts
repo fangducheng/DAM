@@ -10,11 +10,13 @@ import { AuthorizationService } from '../authorization/authorization.service.js'
 import type { PrismaService } from '../infrastructure/prisma.service.js';
 import { PrismaService as Database } from '../infrastructure/prisma.service.js';
 import type { RedisService } from '../infrastructure/redis.service.js';
+import { assertLocalIntegrationRunner } from '../testing/integration-test.guard.js';
 import { GroupService } from './group.service.js';
 import { OrganizationService } from './organization.service.js';
 import { TenantService } from './tenant.service.js';
 
 const integrationEnabled = process.env['DAM_TENANT_INTEGRATION_TESTS'] === '1';
+assertLocalIntegrationRunner(integrationEnabled);
 const integration = integrationEnabled ? describe : describe.skip;
 
 integration('Tenant, organization, and shared-group management', () => {

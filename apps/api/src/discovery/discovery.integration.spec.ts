@@ -6,12 +6,14 @@ import type { AuthenticatedUser } from '@dam/contracts';
 
 import type { AuthorizationService } from '../authorization/authorization.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
+import { assertLocalIntegrationRunner } from '../testing/integration-test.guard.js';
 import { AuditService } from './audit.service.js';
 import { NotificationService } from './notification.service.js';
 import { SearchService } from './search.service.js';
 import { TagService } from './tag.service.js';
 
 const integrationEnabled = process.env['DAM_DISCOVERY_INTEGRATION_TESTS'] === '1';
+assertLocalIntegrationRunner(integrationEnabled);
 const integration = integrationEnabled ? describe : describe.skip;
 
 integration('tags, search, audit, and notifications', () => {

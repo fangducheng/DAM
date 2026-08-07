@@ -81,7 +81,8 @@ services:
       - -c
       - >-
         mc alias set local http://minio:9000 dam_local_admin dam_local_password &&
-        mc mb --ignore-existing local/dam-assets
+        mc mb --ignore-existing local/dam-assets &&
+        mc mb --ignore-existing local/dam-assets-integration
     mem_limit: 128m
     cpus: 0.25
     networks: [dam-local]

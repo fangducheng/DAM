@@ -37,13 +37,16 @@ function createService() {
     maintenanceJob: {
       groupBy: vi.fn(),
       findFirst: vi.fn(),
-      findMany: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     deletionBatch: {
       groupBy: vi.fn(),
     },
     storageObject: {
       findMany: vi.fn(),
+    },
+    uploadSession: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     auditEvent: {
       create: vi.fn(),
@@ -248,6 +251,9 @@ describe('MaintenanceService', () => {
         where: {
           OR: [
             {
+              objectKey: { startsWith: `tenants/${actor.tenantId}/` },
+            },
+            {
               sourceVersions: {
                 some: { asset: { node: { space: { tenantId: actor.tenantId } } } },
               },
@@ -287,6 +293,118 @@ describe('MaintenanceService', () => {
       },
     });
     expect(JSON.stringify(prisma.auditEvent.create.mock.calls)).not.toContain('secret-key');
+  });
+
+  it('does not report registered, active-upload, or pending-deletion objects as unknown', async () => {
+    const { prisma, reconciliation, storage } = createService();
+    const registeredKey = `tenants/${actor.tenantId}/objects/registered`;
+    const uploadingKey = `tenants/${actor.tenantId}/objects/uploading`;
+    const pendingDeletionKey = `tenants/${actor.tenantId}/objects/pending-deletion`;
+    const retryDeletionKey = `tenants/${actor.tenantId}/objects/retry-deletion`;
+    const unknownKey = `tenants/${actor.tenantId}/objects/unknown`;
+    const listedKeys = [
+      registeredKey,
+      uploadingKey,
+      pendingDeletionKey,
+      retryDeletionKey,
+      unknownKey,
+    ];
+    const lastModified = new Date('2026-08-07T01:00:00.000Z');
+    prisma.storageObject.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ objectKey: registeredKey }]);
+    prisma.uploadSession.findMany.mockResolvedValue([{ objectKey: uploadingKey }]);
+    prisma.maintenanceJob.findMany.mockResolvedValue([
+      { payload: { bucket: 'dam-assets', objectKey: pendingDeletionKey } },
+      { payload: { bucket: 'dam-assets', objectKey: retryDeletionKey } },
+      { payload: { bucket: 'other-bucket', objectKey: unknownKey } },
+    ]);
+    storage.listTenantObjects.mockReturnValue(
+      storedObjects(listedKeys.map((objectKey) => ({ objectKey, sizeBytes: 64n, lastModified }))),
+    );
+    prisma.auditEvent.create.mockResolvedValue({ id: 'audit-id' });
+
+    const report = await reconciliation.report(actor, { limit: 50 }, {});
+
+    expect(report.summary).toEqual({
+      databaseObjects: 0,
+      storageObjects: 5,
+      missingObjects: 0,
+      unknownObjects: 1,
+    });
+    expect(report.items).toEqual([
+      expect.objectContaining({
+        issueType: 'STORAGE_OBJECT_UNKNOWN',
+        observedSizeBytes: '64',
+      }),
+    ]);
+    expect(prisma.storageObject.findMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        bucket: 'dam-assets',
+        objectKey: { in: listedKeys },
+      },
+      select: { objectKey: true },
+    });
+    expect(prisma.uploadSession.findMany).toHaveBeenCalledWith({
+      where: {
+        space: { tenantId: actor.tenantId },
+        status: { in: ['CREATED', 'UPLOADING'] },
+        objectKey: { in: listedKeys },
+      },
+      select: { objectKey: true },
+    });
+    expect(prisma.maintenanceJob.findMany).toHaveBeenCalledWith({
+      where: {
+        tenantId: actor.tenantId,
+        jobType: 'DELETE_STORAGE_OBJECT',
+        status: { in: ['PENDING', 'RUNNING', 'FAILED', 'DEAD'] },
+        AND: [{ payload: { path: ['bucket'], equals: 'dam-assets' } }],
+        OR: listedKeys.map((objectKey) => ({
+          payload: { path: ['objectKey'], equals: objectKey },
+        })),
+      },
+      select: { payload: true },
+    });
+    expect(storage.removeObject).not.toHaveBeenCalled();
+  });
+
+  it('reports an object referenced only by a terminal upload session as unknown', async () => {
+    const { prisma, reconciliation, storage } = createService();
+    const completedUploadKey = `tenants/${actor.tenantId}/objects/stale-completed-upload`;
+    prisma.storageObject.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    storage.listTenantObjects.mockReturnValue(
+      storedObjects([
+        {
+          objectKey: completedUploadKey,
+          sizeBytes: 96n,
+          lastModified: new Date('2026-08-07T02:00:00.000Z'),
+        },
+      ]),
+    );
+    prisma.auditEvent.create.mockResolvedValue({ id: 'audit-id' });
+
+    const report = await reconciliation.report(actor, { limit: 50 }, {});
+
+    expect(report.summary).toEqual({
+      databaseObjects: 0,
+      storageObjects: 1,
+      missingObjects: 0,
+      unknownObjects: 1,
+    });
+    expect(report.items).toEqual([
+      expect.objectContaining({
+        issueType: 'STORAGE_OBJECT_UNKNOWN',
+        observedSizeBytes: '96',
+      }),
+    ]);
+    expect(prisma.uploadSession.findMany).toHaveBeenCalledWith({
+      where: {
+        space: { tenantId: actor.tenantId },
+        status: { in: ['CREATED', 'UPLOADING'] },
+        objectKey: { in: [completedUploadKey] },
+      },
+      select: { objectKey: true },
+    });
   });
 
   it('paginates reconciliation issues with opaque cursors', async () => {

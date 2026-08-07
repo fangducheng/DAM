@@ -9,11 +9,13 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { ObjectStorageService } from '../infrastructure/object-storage.service.js';
 import { PrismaService } from '../infrastructure/prisma.service.js';
+import { assertLocalIntegrationRunner } from '../testing/integration-test.guard.js';
 import type { ClaimedMaintenanceJob } from './maintenance-job.types.js';
 import { MaintenanceProcessorService } from './maintenance-processor.service.js';
 import { MaintenanceQueueService } from './maintenance-queue.service.js';
 
 const integrationEnabled = process.env['DAM_LIFECYCLE_INTEGRATION_TESTS'] === '1';
+assertLocalIntegrationRunner(integrationEnabled);
 const integration = integrationEnabled ? describe : describe.skip;
 
 if (integrationEnabled) {

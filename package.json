@@ -20,6 +20,8 @@
     "format:check": "prettier --check .",
     "lint": "pnpm build:packages && eslint .",
     "test": "turbo run test --concurrency=1",
+    "test:integration:local": "node tools/run-local-integration-tests.mjs",
+    "test:integration:runner": "node --test tools/run-local-integration-tests.test.mjs",
     "typecheck": "turbo run typecheck --concurrency=1",
     "db:generate": "pnpm --filter @dam/database generate",
     "db:format": "pnpm --filter @dam/database format",
